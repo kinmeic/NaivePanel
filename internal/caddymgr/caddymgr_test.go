@@ -249,3 +249,72 @@ func TestLivePreviewOnlyReturnsMainFile(t *testing.T) {
 		t.Fatalf("preview contains synthetic header or site snippet:\n%s", got)
 	}
 }
+
+func TestRawConfigFormatValidateAndSave(t *testing.T) {
+	const main = "{\n\trespond old\n}\n"
+	m, dir := testManager(t, main)
+	fakeCaddy := filepath.Join(dir, "caddy")
+	script := `#!/bin/sh
+set -eu
+case "$1" in
+  fmt)
+    sed 's/respond unformatted/respond formatted/'
+    ;;
+  validate)
+    config=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--config" ]; then
+        config="$2"
+        break
+      fi
+      shift
+    done
+    if grep -q INVALID "$config"; then
+      echo "invalid test config" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeCaddy, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	m.cfg.Caddy.Bin = fakeCaddy
+
+	formatted, err := m.FormatConfig([]byte("{\n\trespond unformatted\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(formatted), "respond formatted") {
+		t.Fatalf("formatter output was not returned: %q", formatted)
+	}
+	live, err := os.ReadFile(m.cfg.Caddy.MainFile)
+	if err != nil || string(live) != main {
+		t.Fatalf("formatting changed the live file: %q, %v", live, err)
+	}
+
+	if err := m.ValidateConfig([]byte("INVALID")); err == nil ||
+		!strings.Contains(err.Error(), "invalid test config") {
+		t.Fatalf("invalid config was not rejected with command output: %v", err)
+	}
+
+	next := []byte("{\n\trespond saved\n}\n")
+	if err := m.SaveConfig(next); err != nil {
+		t.Fatal(err)
+	}
+	live, err = os.ReadFile(m.cfg.Caddy.MainFile)
+	if err != nil || string(live) != string(next) {
+		t.Fatalf("saved config mismatch: %q, %v", live, err)
+	}
+	backups, err := filepath.Glob(filepath.Join(dir, "backup", "*", "Caddyfile"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("expected one pre-save backup, got %v, %v", backups, err)
+	}
+	old, err := os.ReadFile(backups[0])
+	if err != nil || string(old) != main {
+		t.Fatalf("backup mismatch: %q, %v", old, err)
+	}
+}

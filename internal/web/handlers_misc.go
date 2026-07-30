@@ -23,7 +23,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"BasePath":      s.Cfg.BasePath,
 		"Listen":        s.Cfg.Listen,
 		"HostSite":      s.Cfg.GetHostSite(),
-		"SiteCount":     len(s.Cfg.SitesSnapshot()),
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
 		"BypassActive":  bcInstalled && sysd.IsActive("bypasscore"),
@@ -44,7 +43,7 @@ func (s *Server) handleCaddyReload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.setFlash(w, "Caddy 已重载")
 	}
-	s.redirect(w, r, "/caddy/preview")
+	s.redirect(w, r, "/caddy")
 }
 
 // handleBypass shows BypassCore status and service controls.
@@ -52,13 +51,10 @@ func (s *Server) handleBypass(w http.ResponseWriter, r *http.Request) {
 	installed := s.Bypass.Installed()
 	active := installed && sysd.IsActive("bypasscore")
 	data := map[string]any{
-		"Installed":   installed,
-		"Version":     s.Bypass.Version(),
-		"Active":      active,
-		"Enabled":     installed && sysd.IsEnabled("bypasscore"),
-		"ConfigPath":  s.Cfg.BypassCore.ConfigPath,
-		"SocksPort":   s.Cfg.BypassCore.SocksPort,
-		"ControlSock": s.Cfg.BypassCore.ControlSock,
+		"Installed": installed,
+		"Active":    active,
+		"Enabled":   installed && sysd.IsEnabled("bypasscore"),
+		"SocksPort": s.Cfg.BypassCore.SocksPort,
 	}
 	content, configErr := s.Bypass.ReadConfig()
 	control, inspectErr := bypasscore.InspectControlConfig(content)
@@ -99,7 +95,7 @@ func (s *Server) handleBypassInstall(w http.ResponseWriter, r *http.Request) {
 	tag, err := s.Bypass.Install(s.Cfg.GeoSnapshot().Mirror)
 	if err != nil {
 		s.setFlash(w, "安装/更新失败: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	// Make sure a minimal config exists so the service can start.
@@ -108,22 +104,22 @@ func (s *Server) handleBypassInstall(w http.ResponseWriter, r *http.Request) {
 		minimal, _, _ = bypasscore.EnsureControlPlane(minimal, s.Cfg.BypassCore.ControlSock)
 		if err := s.Bypass.ApplyConfig(minimal); err != nil {
 			s.setFlash(w, "已安装 "+tag+"，但写入初始配置失败: "+err.Error())
-			s.redirect(w, r, "/bypasscore")
+			s.redirect(w, r, "/settings")
 			return
 		}
 	}
 	if err := sysd.Action("enable", "bypasscore"); err != nil {
 		s.setFlash(w, "已安装 "+tag+"，但设置开机启动失败: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	if err := sysd.Action("restart", "bypasscore"); err != nil {
 		s.setFlash(w, "已安装 "+tag+"，但启动失败（请检查配置）: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	s.setFlash(w, "BypassCore "+tag+" 安装完成并已启动")
-	s.redirect(w, r, "/bypasscore")
+	s.redirect(w, r, "/settings")
 }
 
 // handleBypassControlEnable upgrades an existing config to expose the local

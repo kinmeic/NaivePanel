@@ -5,12 +5,10 @@
 <form method="post" action="{{.Base}}/bypasscore/config" id="bypass-json-form">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <div id="json-format-error" class="error hidden"></div>
-  <div class="list-head">
-    <span class="muted">直接编辑完整 JSON 文件；格式化操作不会提交或保存配置。</span>
-    <button type="button" class="btn" id="json-format-btn">{{icon "file-cog"}}格式化 JSON</button>
-  </div>
+  <p class="muted">直接编辑完整 JSON 文件；格式化操作不会提交或保存配置。</p>
   <textarea id="bypass-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
   <div class="actions">
+    <button type="button" class="btn" id="json-format-btn">{{icon "file-cog"}}格式化 JSON</button>
     <button type="submit" class="primary">{{icon "check"}}校验并生效</button>
     <a class="btn" href="{{.Base}}/bypasscore">{{icon "arrow-left"}}返回</a>
   </div>

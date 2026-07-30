@@ -25,6 +25,22 @@
   </div>
 
   <div class="card">
+    <h3>{{icon "package"}}BypassCore 信息</h3>
+    {{if .Data.Bypass.Installed}}
+      <p><span class="ok">已安装</span>{{if .Data.Bypass.Version}}<span class="service-version mono">{{.Data.Bypass.Version}}</span>{{end}}</p>
+    {{else}}
+      <p><span class="warn">未安装</span></p>
+    {{end}}
+    <p>程序：<code class="path-code">{{.Data.Bypass.BinPath}}</code></p>
+    <p>配置：<code class="path-code">{{.Data.Bypass.ConfigPath}}</code></p>
+    <p>SOCKS5 端口：<code>{{.Data.Bypass.SocksPort}}</code></p>
+    <form method="post" action="{{.Base}}/bypasscore/install" class="inline" data-confirm="将从 GitHub 下载最新 release 并安装/更新，继续？">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button type="submit" class="primary">{{icon "download"}}{{if .Data.Bypass.Installed}}更新到最新版{{else}}安装 BypassCore{{end}}</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h3>{{icon "key-round"}}修改密码</h3>
     <form method="post" action="{{.Base}}/settings/password">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">

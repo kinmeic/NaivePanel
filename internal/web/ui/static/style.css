@@ -74,6 +74,9 @@ button svg.lucide, .btn svg.lucide { margin-right: 5px; }
 .metric-pairs span { min-width: 0; color: var(--muted); }
 .metric-pairs strong { display: block; color: var(--text); overflow-wrap: anywhere; }
 .network-rates strong { margin-top: 4px; font-size: 17px; }
+.service-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.service-actions form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+.path-code { overflow-wrap: anywhere; word-break: break-word; }
 
 table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }

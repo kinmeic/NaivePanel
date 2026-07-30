@@ -21,11 +21,6 @@
     </p>
   </div>
   <div class="card">
-    <h3>{{icon "globe"}}站点</h3>
-    <p>共 {{.Data.SiteCount}} 个站点</p>
-    <p><a href="{{.Base}}/caddy/sites">管理站点 →</a></p>
-  </div>
-  <div class="card">
     <h3>{{icon "map"}}Geo 数据</h3>
     {{range .Data.Geo}}
     <p>{{.Name}}：{{if .Exists}}{{fmtTime .ModTime}}{{else}}<span class="warn">缺失</span>{{end}}</p>

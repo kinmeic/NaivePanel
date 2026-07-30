@@ -17,6 +17,11 @@ import (
 // handleSettings shows the settings page.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	totpOn, _ := s.Cfg.TOTPState()
+	bypassInstalled := s.Bypass.Installed()
+	bypassVersion := ""
+	if bypassInstalled {
+		bypassVersion = s.Bypass.Version()
+	}
 	data := map[string]any{
 		"HostSite":       s.Cfg.GetHostSite(),
 		"TOTPEnabled":    totpOn,
@@ -26,6 +31,13 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"AutoUpdate":     s.Cfg.SelfUpdateEnabled(),
 		"PendingTOTPQR":  "",
 		"PendingTOTPSet": false,
+		"Bypass": map[string]any{
+			"Installed":  bypassInstalled,
+			"Version":    bypassVersion,
+			"BinPath":    s.Cfg.BypassCore.BinPath,
+			"ConfigPath": s.Cfg.BypassCore.ConfigPath,
+			"SocksPort":  s.Cfg.BypassCore.SocksPort,
+		},
 	}
 	if sess := s.session(r); sess != nil {
 		if secret, otpauthURL := sess.PendingTOTP(); secret != "" {

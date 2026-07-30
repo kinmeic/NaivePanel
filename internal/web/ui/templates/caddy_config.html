@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>Caddy 配置编辑</h1>
+{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+{{if .Data.Notice}}<div class="notice ok">{{.Data.Notice}}</div>{{end}}
+<p class="muted">直接编辑主 Caddyfile。格式化与配置检查不会保存；保存时会再次检查、备份并原子写入，服务不会自动重载。</p>
+<form method="post" action="{{.Base}}/caddy/config">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <textarea id="caddy-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
+  <div class="actions">
+    <button type="submit" name="action" value="format" class="btn">{{icon "file-cog"}}格式化</button>
+    <button type="submit" name="action" value="validate" class="btn">{{icon "check"}}配置检查</button>
+    <button type="submit" name="action" value="save" class="primary">{{icon "save"}}保存</button>
+    <a class="btn" href="{{.Base}}/caddy">{{icon "arrow-left"}}返回</a>
+  </div>
+</form>
+{{end}}

@@ -7,10 +7,8 @@ BypassCore 分流核心与 Geo 数据文件。
 
 ## 功能
 
-- **站点管理**：站点列表实时解析磁盘上的 Caddyfile 片段（手工添加/修改的配置直接可见、可编辑、
-  可删除），静态站 / PHP 站 / 反向代理站 / 纯代理站，自定义 handle / handle_path 块，
-  高级模式（原始 Caddyfile 片段），保存即 `caddy validate → 备份 → reload → 探活 → 失败回滚`
-- **Caddy 运维**：服务控制（启动 / 停止 / 重启 / 重载）+ 配置查看（磁盘实况原文）
+- **Caddy 运维**：服务控制（启动 / 停止 / 重启 / 自启 / 重载）+ 主 Caddyfile 纯文本编辑；
+  支持调用 `caddy fmt` 格式化、独立配置检查，以及检查 → 备份 → 原子保存
 - **系统监控**：仪表盘实时展示 CPU、内存、磁盘容量与 I/O、网络实时带宽与累计流量
 - **计划任务**：Web 管理 5 字段 Cron 任务，支持备份/日志清理模板、启停、立即运行与执行日志；
   用户脚本保存为 root 专用独立文件，Cron 条目不内联脚本内容
@@ -25,12 +23,8 @@ BypassCore 分流核心与 Geo 数据文件。
 - **服务日志**：面板内查看 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 
-从磁盘导入普通 Caddyfile 时，面板同时识别有 `route` 和无 `route` 的格式，并原样保留这项语义。
-新建站点默认依赖 Caddy 的内置指令排序；只有确实需要固定 HTTP 处理链顺序时才应开启 `route`。
-存在 `forward_proxy` 站点时，主 Caddyfile 会保留或补充 NaiveProxy 推荐的
-`order forward_proxy before file_server` 全局选项；普通站点不会因此依赖 forwardproxy 插件。
-域名、建站类型、`forward_proxy`、`handle` 块仍以表单编辑；`tls` / `log` / `bind` 等站点选项
-以及无法映射到简化字段的 HTTP 指令会保留在结构化表单的对应区域。只有无法安全拆分的片段才回退到整段原文模式。
+Caddy 编辑器只维护 `caddy.main_file` 指向的主 Caddyfile；该文件导入的其他片段仍由 Caddy
+正常加载，但不会被拼接进编辑器，避免保存主文件时意外改写外部配置。
 
 ## 安装
 
@@ -64,7 +58,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.3.6
+VER=v0.3.7
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
@@ -121,8 +115,7 @@ sudo chmod 600 /etc/naivepanel/config.yaml
 ```
 
 > - `caddy.bin` 取服务器上实际的 caddy 路径；`main_file` / `sites_dir` 按你的布局调整。
-> - 面板保存站点时会保留 `main_file` 中的全局选项、注释、命名片段和其他顶层指令，
->   并确保只存在一条 `import sites_dir/*.caddy`。
+> - 面板的 Caddy 编辑器只读写 `main_file`；`sites_dir` 中的导入片段不会显示或改写。
 
 ```bash
 # 4. 主 Caddyfile 导入片段目录（已有 import 行则跳过，不要覆盖现有配置）
@@ -189,7 +182,7 @@ cmd/naivepanel/      二进制入口（hash-password / gen-path / install / unin
 internal/config/     面板配置模型与持久化
 internal/auth/       Argon2id / session / CSRF / 登录锁定 / TOTP
 internal/sites/      站点模型与 Caddyfile 渲染
-internal/caddymgr/   Caddy 配置管线（validate/备份/reload/回滚/预览）
+internal/caddymgr/   Caddy 主配置格式化、校验、备份、原子保存与 reload
 internal/bypasscore/ BypassCore 安装、配置管线、控制面客户端
 internal/geo/        Geo 数据下载与校验
 internal/cronmgr/    计划任务状态、独立脚本与 /etc/cron.d 同步

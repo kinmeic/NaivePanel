@@ -2,42 +2,32 @@
 <h1>BypassCore</h1>
 <div class="cards">
   <div class="card">
-    <h3>{{icon "package"}}安装状态</h3>
-    {{if .Data.Installed}}
-      <p><span class="ok">已安装</span>{{if .Data.Version}}<span class="service-version mono">{{.Data.Version}}</span>{{end}}</p>
-      <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
-      <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
-    {{else}}
-      <p><span class="warn">未安装</span></p>
-    {{end}}
-    <form method="post" action="{{.Base}}/bypasscore/install" class="inline" data-confirm="将从 GitHub 下载最新 release 并安装/更新，继续？">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <button type="submit" class="primary">{{icon "download"}}{{if .Data.Installed}}更新到最新版{{else}}安装 BypassCore{{end}}</button>
-    </form>
-  </div>
-  <div class="card">
     <h3>{{icon "power"}}服务控制</h3>
-    <form method="post" action="{{.Base}}/bypasscore/service" class="inline">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <button name="action" value="start" class="btn">{{icon "play"}}启动</button>
-      <button name="action" value="stop" class="btn">{{icon "square"}}停止</button>
-      <button name="action" value="restart" class="btn">{{icon "rotate-cw"}}重启</button>
-    </form>
-    <form method="post" action="{{.Base}}/bypasscore/service" class="inline">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      {{if .Data.Enabled}}
-      <button name="action" value="disable" class="btn" data-confirm="关闭后 BypassCore 将不会随系统启动；当前服务不会停止。确定关闭？">{{icon "x"}}关闭自启</button>
-      {{else}}
-      <button name="action" value="enable" class="btn">{{icon "check"}}开启自启</button>
-      {{end}}
-    </form>
-    <p class="muted">本机 SOCKS5 入站端口：<code>{{.Data.SocksPort}}</code>（站点启用 BypassCore 分流时 upstream 指向它）</p>
-    <p><a class="btn" href="{{.Base}}/logs?service=bypasscore">{{icon "scroll-text"}}查看日志</a></p>
-  </div>
-  <div class="card">
-    <h3>{{icon "file-cog"}}配置</h3>
-    <p class="mono">{{.Data.ConfigPath}}</p>
-    <p><a class="btn" href="{{.Base}}/bypasscore/config">{{icon "pencil"}}编辑配置</a></p>
+    <p>服务：
+      {{if .Data.Installed}}
+        {{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}
+      {{else}}<span class="muted">未安装</span>{{end}}
+    </p>
+    <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
+    <div class="service-actions">
+      <form method="post" action="{{.Base}}/bypasscore/service">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <button name="action" value="start" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "play"}}启动</button>
+        <button name="action" value="stop" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "square"}}停止</button>
+        <button name="action" value="restart" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "rotate-cw"}}重启</button>
+      </form>
+      <form method="post" action="{{.Base}}/bypasscore/service">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        {{if .Data.Enabled}}
+        <button name="action" value="disable" class="btn" data-confirm="关闭后 BypassCore 将不会随系统启动；当前服务不会停止。确定关闭？">{{icon "x"}}关闭自启</button>
+        {{else}}
+        <button name="action" value="enable" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "check"}}开启自启</button>
+        {{end}}
+      </form>
+      <a class="btn" href="{{.Base}}/bypasscore/config">{{icon "pencil"}}编辑配置</a>
+      <a class="btn" href="{{.Base}}/logs?service=bypasscore">{{icon "scroll-text"}}查看日志</a>
+    </div>
+    <p class="muted">本机 SOCKS5 入站端口：<code>{{.Data.SocksPort}}</code>（Caddy 使用 BypassCore 分流时指向该端口）</p>
   </div>
 </div>
 

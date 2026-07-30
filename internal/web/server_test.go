@@ -45,6 +45,71 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 		strings.Contains(bypassHTML, "结构化编辑") {
 		t.Fatalf("unexpected BypassCore editor:\n%s", bypassHTML)
 	}
+	formatAt := strings.Index(bypassHTML, `id="json-format-btn"`)
+	applyAt := strings.Index(bypassHTML, "校验并生效")
+	if formatAt < 0 || applyAt < 0 || formatAt > applyAt {
+		t.Fatalf("JSON formatter must be immediately available before apply:\n%s", bypassHTML)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "caddy_config", "Caddy 配置", caddyConfigPageData{
+		Config: "{\n\trespond ok\n}\n",
+	})
+	caddyConfigHTML := recorder.Body.String()
+	last := -1
+	for _, control := range []string{`value="format"`, `value="validate"`, `value="save"`, `class="btn" href="/manage-test/caddy"`} {
+		at := strings.Index(caddyConfigHTML, control)
+		if at < 0 || at < last {
+			t.Fatalf("Caddy editor controls are missing or out of order (%s):\n%s", control, caddyConfigHTML)
+		}
+		last = at
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "caddy", "Caddy", caddyPageData{Active: true, Enabled: true})
+	caddyHTML := recorder.Body.String()
+	if strings.Contains(caddyHTML, "配置查看") || strings.Contains(caddyHTML, ">站点<") ||
+		!strings.Contains(caddyHTML, `/manage-test/caddy/config`) {
+		t.Fatalf("unexpected Caddy service page:\n%s", caddyHTML)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "bypass", "BypassCore", map[string]any{
+		"Installed": true, "Active": true, "Enabled": true, "SocksPort": 1080,
+		"StatusInfo": "test",
+	})
+	bypassPageHTML := recorder.Body.String()
+	if strings.Contains(bypassPageHTML, "安装状态") || strings.Contains(bypassPageHTML, "<h3>配置</h3>") {
+		t.Fatalf("legacy BypassCore cards remain:\n%s", bypassPageHTML)
+	}
+	editAt := strings.Index(bypassPageHTML, `/manage-test/bypasscore/config`)
+	logAt := strings.Index(bypassPageHTML, `/manage-test/logs?service=bypasscore`)
+	if editAt < 0 || logAt < editAt {
+		t.Fatalf("BypassCore log control must follow config control:\n%s", bypassPageHTML)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "settings", "设置", map[string]any{
+		"Version": "test",
+		"Bypass": map[string]any{
+			"Installed": false, "BinPath": "/usr/local/bin/bypasscore",
+			"ConfigPath": "/etc/bypasscore/config.json", "SocksPort": 1080,
+		},
+	})
+	settingsHTML := recorder.Body.String()
+	panelInfoAt := strings.Index(settingsHTML, "面板信息")
+	bypassInfoAt := strings.Index(settingsHTML, "BypassCore 信息")
+	passwordAt := strings.Index(settingsHTML, "修改密码")
+	if panelInfoAt < 0 || bypassInfoAt < panelInfoAt || passwordAt < bypassInfoAt {
+		t.Fatalf("BypassCore information card is not beside panel information:\n%s", settingsHTML)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "dashboard", "仪表盘", map[string]any{})
+	if strings.Contains(recorder.Body.String(), ">站点<") ||
+		strings.Contains(recorder.Body.String(), "/caddy/sites") {
+		t.Fatalf("dashboard still contains the sites card:\n%s", recorder.Body.String())
+	}
 
 	recorder = httptest.NewRecorder()
 	site := sites.Site{
@@ -75,7 +140,7 @@ func TestNewParsesAllTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, page := range []string{"dashboard", "cron", "cron_form", "site_form", "sites_list"} {
+	for _, page := range []string{"dashboard", "caddy", "caddy_config", "bypass", "bypass_config", "cron", "cron_form"} {
 		if server.pages[page] == nil {
 			t.Errorf("template %q was not parsed", page)
 		}

@@ -22,6 +22,7 @@ import (
 )
 
 const keepBackups = 20
+const maxRawConfigSize = 2 << 20
 
 // Manager applies panel site models to the on-disk Caddy configuration.
 type Manager struct {
@@ -165,6 +166,147 @@ func (m *Manager) validate(staging string) error {
 		return fmt.Errorf("caddy validate 失败: %v\n%s", err, out.String())
 	}
 	return nil
+}
+
+// ReadConfig returns the main Caddyfile exactly as stored on disk.
+func (m *Manager) ReadConfig() ([]byte, error) {
+	if info, err := os.Stat(m.cfg.Caddy.MainFile); err == nil && info.Size() > maxRawConfigSize {
+		return nil, fmt.Errorf("Caddyfile 超过 2 MiB")
+	}
+	data, err := os.ReadFile(m.cfg.Caddy.MainFile)
+	if err != nil {
+		return nil, fmt.Errorf("读取 Caddyfile: %w", err)
+	}
+	if len(data) > maxRawConfigSize {
+		return nil, fmt.Errorf("Caddyfile 超过 2 MiB")
+	}
+	return data, nil
+}
+
+// FormatConfig formats Caddyfile text with the configured Caddy binary.
+// Stdin is used deliberately: formatting must not modify the live file.
+func (m *Manager) FormatConfig(content []byte) ([]byte, error) {
+	if len(content) > maxRawConfigSize {
+		return nil, fmt.Errorf("配置超过 2 MiB")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.Caddy.Bin, "fmt", "-")
+	cmd.Stdin = bytes.NewReader(content)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("caddy fmt 超时")
+		}
+		return nil, fmt.Errorf("caddy fmt 失败: %v\n%s", err, strings.TrimSpace(stderr.String()))
+	}
+	if stdout.Len() > maxRawConfigSize {
+		return nil, fmt.Errorf("格式化后的配置超过 2 MiB")
+	}
+	return stdout.Bytes(), nil
+}
+
+// ValidateConfig validates unsaved Caddyfile text without touching the live
+// configuration. The temporary file lives beside the real Caddyfile and the
+// command runs from that directory so relative import paths keep their normal
+// meaning.
+func (m *Manager) ValidateConfig(content []byte) error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	return m.validateContent(content)
+}
+
+func (m *Manager) validateContent(content []byte) error {
+	if len(content) > maxRawConfigSize {
+		return fmt.Errorf("配置超过 2 MiB")
+	}
+	dir := filepath.Dir(m.cfg.Caddy.MainFile)
+	tmp, err := os.CreateTemp(dir, ".naivepanel-caddy-validate-*")
+	if err != nil {
+		return fmt.Errorf("创建校验文件: %w", err)
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	dataDir, err := os.MkdirTemp("", "naivepanel-caddy-data-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dataDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.Caddy.Bin, "validate", "--config", name, "--adapter", "caddyfile")
+	cmd.Dir = dir
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+dataDir)
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("Caddy 配置检查超时")
+		}
+		return fmt.Errorf("Caddy 配置检查失败: %v\n%s", err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
+// SaveConfig validates, backs up and atomically replaces the main Caddyfile.
+// It intentionally does not reload the service; operators can review the
+// saved file and use the explicit "重载配置" control when ready.
+func (m *Manager) SaveConfig(content []byte) error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	if err := m.validateContent(content); err != nil {
+		return err
+	}
+	if _, err := m.backup(); err != nil {
+		return fmt.Errorf("备份当前配置失败: %w", err)
+	}
+	mode := os.FileMode(0644)
+	if info, err := os.Stat(m.cfg.Caddy.MainFile); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := writeFileAtomic(m.cfg.Caddy.MainFile, content, mode); err != nil {
+		return fmt.Errorf("保存 Caddyfile: %w", err)
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // backup snapshots the current live config into a timestamped folder under
