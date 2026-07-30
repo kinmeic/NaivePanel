@@ -25,10 +25,20 @@
 
   <fieldset id="raw-section" {{if not $s.RawMode}}class="hidden"{{end}}>
     <legend>原始 Caddyfile 片段</legend>
-    <textarea name="raw" rows="18" class="mono">{{$s.Raw}}</textarea>
+    <p class="muted">首次切换时会用当前结构化表单生成完整片段；进入高级模式后请直接维护这里的内容。</p>
+    <textarea name="raw" rows="18" class="mono">{{if $s.RawMode}}{{$s.Raw}}{{else}}{{$d.Preview}}{{end}}</textarea>
   </fieldset>
 
   <div id="structured-section" {{if $s.RawMode}}class="hidden"{{end}}>
+  <fieldset>
+    <legend>站点级选项（route 外）</legend>
+    <p class="muted">直接位于站点块中，适用于 tls / log / bind / handle_errors；嵌套缩进会原样保留。</p>
+    <textarea name="site_options" rows="6" class="mono" placeholder="tls {&#10;&#9;dns cloudflare TOKEN&#10;}">{{$s.SiteOptions}}</textarea>
+  </fieldset>
+
+  <section class="caddy-route-block">
+  <div class="caddy-route-brace"><code>route {</code><span>以下 HTTP 处理器按显示顺序位于 route 闭包内</span></div>
+  <div class="caddy-route-body">
   <fieldset>
     <legend>forward_proxy（NaiveProxy）</legend>
     <label class="check">
@@ -42,7 +52,7 @@
       <input type="checkbox" name="fp_bypass" {{if $s.ForwardProxy.UseBypassCore}}checked{{end}}>
       使用本机 BypassCore 分流（upstream 自动设为 socks5://127.0.0.1:面板配置端口）
     </label>
-    <label>自定义 upstream（不使用 BypassCore 时生效，留空为直连）
+    <label id="fp-upstream-field">自定义 upstream（留空为直连）
       <input name="fp_upstream" value="{{$s.ForwardProxy.Upstream}}" placeholder="https://user:pass@upstream.com:443 或 socks5://...">
     </label>
   </fieldset>
@@ -90,15 +100,15 @@
   </fieldset>
 
   <fieldset>
-    <legend>保留的自定义指令</legend>
-    <p class="muted">从现有 Caddyfile 识别出的高级配置会保留在这里；站点级选项位于 route 外，HTTP 处理指令位于 route 内。</p>
-    <label>站点级选项（如 tls / log / bind）
-      <textarea name="site_options" rows="5" class="mono" placeholder="tls admin@example.com">{{$s.SiteOptions}}</textarea>
-    </label>
+    <legend>route 内附加指令</legend>
+    <p class="muted">从现有 Caddyfile 识别出的其他 HTTP 指令会保留在这里。</p>
     <label>附加 HTTP 指令
       <textarea name="extra_directives" rows="7" class="mono" placeholder="header X-Content-Type-Options nosniff">{{$s.ExtraDirectives}}</textarea>
     </label>
   </fieldset>
+  </div>
+  <div class="caddy-route-brace caddy-route-close"><code>}</code></div>
+  </section>
   </div>
 
   <div class="actions">

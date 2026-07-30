@@ -262,7 +262,7 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 | POST | /caddy/reload | 手动重载 Caddy | 是 |
 | GET | /bypasscore | 状态 + 版本 + 服务控制 | 是 |
 | POST | /bypasscore/install | 安装/更新 BypassCore | 是 |
-| GET/POST | /bypasscore/config | 配置编辑（validate+reload 管线） | 是 |
+| GET/POST | /bypasscore/config | 通用结构化 JSON / 高级 JSON 配置编辑（validate+reload 管线） | 是 |
 | POST | /bypasscore/service/{start,stop,restart} | 服务控制 | 是 |
 | GET/POST | /geo | Geo 文件状态 + 手动更新 | 是 |
 | GET/POST | /settings | 改密码、TOTP 设置/开关、寄宿站点迁移、面板信息 | 是 |

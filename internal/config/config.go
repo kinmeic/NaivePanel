@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -231,15 +232,46 @@ func Load(path string) (*Config, error) {
 	}
 	c.path = path
 	c.SetDefaults()
+	migrated, err := c.migrateLegacyValues()
+	if err != nil {
+		return nil, err
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
 	if c.ProxyToken == "" {
 		// Older configs lack the HTTPS gate token; generate and persist.
 		c.ProxyToken = RandomToken()
-		_ = c.Save()
+		migrated = true
+	}
+	if migrated {
+		if err := c.Save(); err != nil {
+			return nil, fmt.Errorf("保存迁移后的配置: %w", err)
+		}
 	}
 	return &c, nil
+}
+
+// migrateLegacyValues upgrades only values emitted or commonly copied from
+// older NaivePanel documentation. Shell expressions are never evaluated:
+// LookPath resolves the known executable name and the resulting absolute path
+// is persisted before the regular security validation runs.
+func (c *Config) migrateLegacyValues() (bool, error) {
+	switch strings.TrimSpace(c.Caddy.Bin) {
+	case "caddy", "$(command -v caddy)":
+		path, err := exec.LookPath("caddy")
+		if err != nil {
+			return false, fmt.Errorf("迁移 caddy.bin 失败：未找到 caddy 可执行文件，请将其改为绝对路径（例如 /usr/bin/caddy）")
+		}
+		path, err = filepath.Abs(path)
+		if err != nil || !filepath.IsAbs(path) {
+			return false, fmt.Errorf("迁移 caddy.bin 失败：无法确定 caddy 的绝对路径")
+		}
+		c.Caddy.Bin = path
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 // Save atomically persists the config (0600).

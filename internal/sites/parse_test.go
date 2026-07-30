@@ -207,8 +207,37 @@ func TestParseSiteOptionBeforeRoute(t *testing.T) {
 	if !strings.Contains(got.SiteOptions, "dns cloudflare token") {
 		t.Fatalf("tls option lost: %q", got.SiteOptions)
 	}
+	if want := "tls {\n\tdns cloudflare token\n\tresolvers 1.1.1.1\n}"; got.SiteOptions != want {
+		t.Fatalf("tls option indentation:\n got: %q\nwant: %q", got.SiteOptions, want)
+	}
 	if !got.ForwardProxy.Enabled || got.Web.Type != WebPHP || got.Web.Root != "/srv/example" {
 		t.Fatalf("route was not parsed structurally: %+v", got)
+	}
+	rendered, err := Render(got, PanelInfo{}, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "\ttls {\n\t\tdns cloudflare token\n\t\tresolvers 1.1.1.1\n\t}") {
+		t.Fatalf("tls option rendered indentation lost:\n%s", rendered)
+	}
+}
+
+func TestParsePreservesSpaceIndentedDirectiveBlock(t *testing.T) {
+	snippet := `example.com {
+  log {
+    output file /var/log/caddy/access.log {
+      roll_size 10MiB
+    }
+  }
+  respond ok
+}`
+	got, err := Parse(snippet, "/manage-test", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "log {\n\toutput file /var/log/caddy/access.log {\n\t  roll_size 10MiB\n\t}\n}"
+	if got.SiteOptions != want {
+		t.Fatalf("space indentation:\n got: %q\nwant: %q", got.SiteOptions, want)
 	}
 }
 

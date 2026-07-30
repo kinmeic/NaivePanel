@@ -317,28 +317,44 @@ func (p *snippetParser) collectDirective(line string) (string, error) {
 	if content == "" {
 		return line + "\n}", nil
 	}
-	return line + "\n" + content + "\n}", nil
+	// collectBlock removes the block body's common outer indentation. Add
+	// one logical level back so nested site options/directives keep their
+	// relative shape when the complete directive is rendered elsewhere.
+	var nested strings.Builder
+	for _, child := range strings.Split(content, "\n") {
+		if strings.TrimSpace(child) != "" {
+			nested.WriteString("\t")
+		}
+		nested.WriteString(child)
+		nested.WriteString("\n")
+	}
+	return line + "\n" + strings.TrimSuffix(nested.String(), "\n") + "\n}", nil
 }
 
-// dedentLines strips the common leading-tab indentation.
+// dedentLines strips the exact common whitespace prefix. Caddyfiles often
+// mix tabs and spaces, and removing "all leading whitespace" would flatten
+// nested blocks such as tls/log/handle_errors.
 func dedentLines(content []string) string {
-	minTabs := -1
+	common := ""
 	for _, l := range content {
 		if strings.TrimSpace(l) == "" {
 			continue
 		}
+		indent := l[:len(l)-len(strings.TrimLeft(l, " \t"))]
+		if common == "" {
+			common = indent
+			continue
+		}
 		n := 0
-		for n < len(l) && l[n] == '\t' {
+		for n < len(common) && n < len(indent) && common[n] == indent[n] {
 			n++
 		}
-		if minTabs < 0 || n < minTabs {
-			minTabs = n
-		}
+		common = common[:n]
 	}
-	if minTabs > 0 {
+	if common != "" {
 		for i, l := range content {
-			if len(l) >= minTabs {
-				content[i] = l[minTabs:]
+			if strings.HasPrefix(l, common) {
+				content[i] = l[len(common):]
 			}
 		}
 	}

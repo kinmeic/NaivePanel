@@ -1,25 +1,68 @@
 {{if .Data.Rows}}
-<table>
+<div class="table-scroll">
+<table class="sites-table">
+  <colgroup>
+    <col class="site-col-domain">
+    <col class="site-col-type">
+    <col class="site-col-forward">
+    <col class="site-col-upstream">
+    <col class="site-col-note">
+    <col class="site-col-actions">
+  </colgroup>
   <thead><tr><th>域名</th><th>类型</th><th>forward_proxy</th><th>upstream</th><th>备注</th><th>操作</th></tr></thead>
   <tbody>
   {{range .Data.Rows}}
   <tr>
-    <td><strong>{{.Site.Domain}}</strong>{{if eq .Site.Domain $.Data.HostSite}} <span class="tag">面板寄宿</span>{{end}}{{if .Inline}} <span class="tag">主文件内</span>{{end}}</td>
-    <td>{{if .Site.RawMode}}高级模式{{else}}{{.Site.Web.Type}}{{end}}</td>
-    <td>{{if .Site.ForwardProxy.Enabled}}启用（{{len .Site.ForwardProxy.Accounts}} 个账号）{{else}}关闭{{end}}</td>
-    <td class="mono">{{if .Site.ForwardProxy.Enabled}}{{if .Site.ForwardProxy.UseBypassCore}}BypassCore{{else}}{{if .Site.ForwardProxy.Upstream}}{{.Site.ForwardProxy.Upstream}}{{else}}直连{{end}}{{end}}{{else}}-{{end}}</td>
-    <td>{{if .Site.ExtraBlocks}}{{len .Site.ExtraBlocks}} 个自定义块{{end}}{{if .Site.SiteOptions}}<span class="tag muted">站点选项</span>{{end}}{{if .Site.ExtraDirectives}}<span class="tag muted">附加指令</span>{{end}}{{if .ParseNote}}<br><span class="muted" title="{{.ParseNote}}">未完全匹配：{{.ParseNote}}</span>{{end}}</td>
     <td>
-      <a class="btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit">{{icon "pencil"}}编辑</a>
+      <strong>{{.Site.Domain}}</strong>
+      {{if or (eq .Site.Domain $.Data.HostSite) .Inline}}
+      <div class="site-tags">
+        {{if eq .Site.Domain $.Data.HostSite}}<span class="tag">面板寄宿</span>{{end}}
+        {{if .Inline}}<span class="tag">主文件内</span>{{end}}
+      </div>
+      {{end}}
+    </td>
+    <td>{{if .Site.RawMode}}高级模式{{else}}{{.Site.Web.Type}}{{end}}</td>
+    <td>{{if .Site.ForwardProxy.Enabled}}<span class="ok">启用</span>{{else}}<span class="muted">关闭</span>{{end}}</td>
+    <td>
+      {{if .Site.ForwardProxy.Enabled}}
+        {{if .Site.ForwardProxy.UseBypassCore}}
+          <span class="tag muted">BypassCore</span>
+        {{else if .Site.ForwardProxy.Upstream}}
+          <details class="upstream-detail">
+            <summary>自定义 upstream</summary>
+            <code>{{.Site.ForwardProxy.Upstream}}</code>
+          </details>
+        {{else}}
+          <span class="muted">直连</span>
+        {{end}}
+      {{else}}<span class="muted">-</span>{{end}}
+    </td>
+    <td>
+      {{if or .Site.ExtraBlocks .Site.SiteOptions .Site.ExtraDirectives .ParseNote}}
+      <span class="note-tooltip" tabindex="0" aria-label="查看备注">
+        {{icon "info"}}
+        <span class="note-tooltip-content">
+          {{if .Site.ExtraBlocks}}<span>{{len .Site.ExtraBlocks}} 个自定义块</span>{{end}}
+          {{if .Site.SiteOptions}}<span>包含 route 外站点选项</span>{{end}}
+          {{if .Site.ExtraDirectives}}<span>包含 route 内附加指令</span>{{end}}
+          {{if .ParseNote}}<span>未完全匹配：{{.ParseNote}}</span>{{end}}
+        </span>
+      </span>
+      {{else}}<span class="muted">-</span>{{end}}
+    </td>
+    <td class="site-actions">
+      <a class="btn icon-btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit" title="编辑 {{.Site.Domain}}" aria-label="编辑 {{.Site.Domain}}">{{icon "pencil"}}</a>
       <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Site.Domain}}？">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <button type="submit" class="danger">{{icon "trash-2"}}删除</button>
+        <button type="submit" class="danger icon-btn" title="删除 {{.Site.Domain}}" aria-label="删除 {{.Site.Domain}}">{{icon "trash-2"}}</button>
       </form>
     </td>
   </tr>
   {{end}}
   </tbody>
 </table>
+</div>
 {{else}}
 <div class="empty">磁盘上还没有站点配置，点击右上角「新建站点」创建第一个。</div>
 {{end}}

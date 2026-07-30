@@ -16,8 +16,8 @@ BypassCore 分流核心与 Geo 数据文件。
 - **面板自更新**：设置页检查/安装新版本（GitHub release，SHA256SUMS 校验 + 安装前自检 +
   替换后自动重启），可开启每天自动更新
 - **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
-  配置编辑（`-check-config` → 控制面事务热重载）、服务控制、运行状态查看；存量配置未开启
-  control socket 时会给出明确诊断和一键启用入口
+  通用结构化 JSON 编辑（保留高级 JSON 模式与未知字段）、`-check-config` → 控制面事务热重载、
+  服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源
 - **服务日志**：面板内查看 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
@@ -58,7 +58,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.3.4
+VER=v0.3.5
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
@@ -70,6 +70,11 @@ sudo install -m 0755 naivepanel /usr/local/bin/naivepanel
 PASS_HASH="$(/usr/local/bin/naivepanel hash-password)"   # 回车后输入密码
 BASE_PATH="$(/usr/local/bin/naivepanel gen-path)"
 PROXY_TOKEN="$(openssl rand -hex 24)"
+CADDY_BIN="$(command -v caddy)"
+test -n "${CADDY_BIN}" && test "${CADDY_BIN#/}" != "${CADDY_BIN}" || {
+  echo "未找到 Caddy 的绝对路径" >&2
+  exit 1
+}
 
 # 3. 写面板配置
 sudo mkdir -p /etc/naivepanel /etc/caddy/sites
@@ -84,7 +89,7 @@ host_site: example.com
 session_ttl_hours: 12
 proxy_token: '${PROXY_TOKEN}'
 caddy:
-  bin: $(command -v caddy)
+  bin: ${CADDY_BIN}
   main_file: /etc/caddy/Caddyfile
   sites_dir: /etc/caddy/sites
 bypasscore:

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func validConfig(t *testing.T) *Config {
@@ -74,5 +77,74 @@ func TestValidateMirror(t *testing.T) {
 		if err := ValidateMirror(bad); err == nil {
 			t.Fatalf("%q should be rejected", bad)
 		}
+	}
+}
+
+func TestLoadMigratesLegacyCaddyBin(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.Mkdir(binDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	caddyPath := filepath.Join(binDir, "caddy")
+	if err := os.WriteFile(caddyPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	for _, tc := range []struct {
+		name   string
+		legacy string
+	}{
+		{"bare name", "caddy"},
+		{"documented shell literal", "$(command -v caddy)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.Caddy.Bin = tc.legacy
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			data, err := yaml.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			loaded, err := Load(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Caddy.Bin != caddyPath {
+				t.Fatalf("caddy.bin = %q, want %q", loaded.Caddy.Bin, caddyPath)
+			}
+			persisted, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved Config
+			if err := yaml.Unmarshal(persisted, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved.Caddy.Bin != caddyPath {
+				t.Fatalf("迁移结果未持久化:\n%s", persisted)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsUnknownRelativeCaddyBin(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Caddy.Bin = "custom-caddy"
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(configPath); err == nil || !strings.Contains(err.Error(), "caddy.bin") {
+		t.Fatalf("应拒绝未知相对路径，得到 %v", err)
 	}
 }
