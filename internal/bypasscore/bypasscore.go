@@ -106,6 +106,9 @@ func (m *Manager) Ready() (json.RawMessage, error) {
 // checkConfig validates config bytes with `bypasscore -check-config`.
 func (m *Manager) checkConfig(path string) error {
 	cmd := exec.Command(m.cfg.BypassCore.BinPath, "-check-config", "-config", path)
+	// Match the systemd unit's WorkingDirectory. BypassCore resolves relative
+	// geodata references (geoip.dat / geosite.dat) from this directory.
+	cmd.Dir = m.cfg.BypassCore.WorkDir
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {

@@ -16,7 +16,7 @@
     <a href="{{.Base}}/bypasscore" class="{{if or (eq .Title "BypassCore") (eq .Title "BypassCore 配置")}}active{{end}}">{{icon "route"}}<span>BypassCore</span></a>
     <a href="{{.Base}}/cron" class="{{if or (eq .Title "计划任务") (eq .Title "新建计划任务") (eq .Title "编辑计划任务")}}active{{end}}">{{icon "clock-3"}}<span>计划任务</span></a>
     <a href="{{.Base}}/geo" class="{{if eq .Title "Geo 数据文件"}}active{{end}}">{{icon "map"}}<span>Geo 数据</span></a>
-    <a href="{{.Base}}/logs" class="{{if eq .Title "服务日志"}}active{{end}}">{{icon "scroll-text"}}<span>日志</span></a>
+    <a href="{{.Base}}/logs" class="{{if eq .Title "日志"}}active{{end}}">{{icon "scroll-text"}}<span>日志</span></a>
     <a href="{{.Base}}/settings" class="{{if eq .Title "设置"}}active{{end}}">{{icon "settings"}}<span>设置</span></a>
   </nav>
   <form method="post" action="{{.Base}}/logout" class="logout">

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -256,13 +257,61 @@ func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
+			recorder := &statusRecorder{ResponseWriter: w}
+			started := time.Now()
 			if subtle.ConstantTimeCompare([]byte(r.FormValue("_csrf")), []byte(sess.CSRF)) != 1 {
-				http.Error(w, "CSRF 校验失败", http.StatusForbidden)
+				http.Error(recorder, "CSRF 校验失败", http.StatusForbidden)
+				s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
 				return
 			}
+			h(recorder, r)
+			s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
+			return
 		}
 		h(w, r)
 	}
+}
+
+const operationLogMarker = "naivepanel-operation"
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *statusRecorder) statusCode() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (s *Server) logOperation(user string, r *http.Request, status int, elapsed time.Duration) {
+	path := strings.TrimPrefix(r.URL.Path, s.Cfg.BasePath)
+	if path == "" {
+		path = "/"
+	}
+	log.Printf("%s user=%q method=%q path=%q status=%d duration_ms=%d",
+		operationLogMarker, user, r.Method, path, status, elapsed.Milliseconds())
 }
 
 func (s *Server) session(r *http.Request) *auth.Session {

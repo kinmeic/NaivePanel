@@ -1,7 +1,12 @@
 {{define "content"}}
-<h1>服务日志</h1>
+<h1>日志</h1>
+{{if eq .Data.Service "operations"}}
+<p class="muted">面板内已认证操作的审计记录；不记录密码、令牌、配置正文或其他表单内容（最新在最后）。</p>
+{{else}}
 <p class="muted">来自 systemd journal 的服务运行日志（最新在最后）。</p>
+{{end}}
 <div class="logbar">
+  <a class="btn {{if eq .Data.Service "operations"}}active{{end}}" href="{{.Base}}/logs?service=operations&lines={{.Data.Lines}}">{{icon "activity"}}操作日志</a>
   <a class="btn {{if eq .Data.Service "caddy"}}active{{end}}" href="{{.Base}}/logs?service=caddy&lines={{.Data.Lines}}">{{icon "file-cog"}}Caddy</a>
   <a class="btn {{if eq .Data.Service "bypasscore"}}active{{end}}" href="{{.Base}}/logs?service=bypasscore&lines={{.Data.Lines}}">{{icon "route"}}BypassCore</a>
   <span class="muted">行数：</span>

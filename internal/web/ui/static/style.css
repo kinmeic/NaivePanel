@@ -74,6 +74,8 @@ button svg.lucide, .btn svg.lucide { margin-right: 5px; }
 .metric-pairs span { min-width: 0; color: var(--muted); }
 .metric-pairs strong { display: block; color: var(--text); overflow-wrap: anywhere; }
 .network-rates strong { margin-top: 4px; font-size: 17px; }
+.service-status-line { display: flex; align-items: center; gap: 10px 28px; flex-wrap: wrap; margin: 8px 0; }
+.service-status-item { white-space: nowrap; }
 .service-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
 .service-actions form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .path-code { overflow-wrap: anywhere; word-break: break-word; }

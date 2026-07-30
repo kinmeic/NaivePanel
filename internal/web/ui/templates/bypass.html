@@ -3,12 +3,14 @@
 <div class="cards">
   <div class="card">
     <h3>{{icon "power"}}服务控制</h3>
-    <p>服务：
-      {{if .Data.Installed}}
-        {{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}
-      {{else}}<span class="muted">未安装</span>{{end}}
-    </p>
-    <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
+    <div class="service-status-line">
+      <span class="service-status-item">服务：
+        {{if .Data.Installed}}
+          {{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}
+        {{else}}<span class="muted">未安装</span>{{end}}
+      </span>
+      <span class="service-status-item">开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</span>
+    </div>
     <div class="service-actions">
       <form method="post" action="{{.Base}}/bypasscore/service">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">

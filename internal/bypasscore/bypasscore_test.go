@@ -2,8 +2,12 @@ package bypasscore
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kinmeic/NaivePanel/internal/config"
 )
 
 func TestEnsureSocksInboundEmpty(t *testing.T) {
@@ -117,5 +121,36 @@ func TestSHA256ForAsset(t *testing.T) {
 	}
 	if _, err := sha256ForAsset(sums, "bypasscore-darwin-arm64.tar.gz"); err == nil {
 		t.Fatal("missing asset must error")
+	}
+}
+
+func TestCheckConfigUsesBypassCoreWorkDir(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "geosite.dat"), []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fakeBin := filepath.Join(workDir, "bypasscore")
+	script := `#!/bin/sh
+set -eu
+test -f geosite.dat
+test "$1" = "-check-config"
+test "$2" = "-config"
+test -f "$3"
+`
+	if err := os.WriteFile(fakeBin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"routing":{"rules":[{"domain":["geosite:cn"]}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := New(&config.Config{
+		BypassCore: config.BypassCore{
+			BinPath: fakeBin,
+			WorkDir: workDir,
+		},
+	})
+	if err := manager.checkConfig(configPath); err != nil {
+		t.Fatalf("checkConfig did not use bypasscore.work_dir: %v", err)
 	}
 }

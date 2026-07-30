@@ -1,7 +1,11 @@
 package web
 
 import (
+	"bytes"
+	"log"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +73,8 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	server.render(recorder, request, "caddy", "Caddy", caddyPageData{Active: true, Enabled: true})
 	caddyHTML := recorder.Body.String()
 	if strings.Contains(caddyHTML, "配置查看") || strings.Contains(caddyHTML, ">站点<") ||
-		!strings.Contains(caddyHTML, `/manage-test/caddy/config`) {
+		!strings.Contains(caddyHTML, `/manage-test/caddy/config`) ||
+		!strings.Contains(caddyHTML, `class="service-status-line"`) {
 		t.Fatalf("unexpected Caddy service page:\n%s", caddyHTML)
 	}
 
@@ -81,6 +86,9 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	bypassPageHTML := recorder.Body.String()
 	if strings.Contains(bypassPageHTML, "安装状态") || strings.Contains(bypassPageHTML, "<h3>配置</h3>") {
 		t.Fatalf("legacy BypassCore cards remain:\n%s", bypassPageHTML)
+	}
+	if !strings.Contains(bypassPageHTML, `class="service-status-line"`) {
+		t.Fatalf("BypassCore service statuses are not on one responsive line:\n%s", bypassPageHTML)
 	}
 	editAt := strings.Index(bypassPageHTML, `/manage-test/bypasscore/config`)
 	logAt := strings.Index(bypassPageHTML, `/manage-test/logs?service=bypasscore`)
@@ -105,10 +113,32 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	}
 
 	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "cron", "计划任务", map[string]any{
+		"Installed": true, "Active": true, "Enabled": true,
+		"CronFile": "/etc/cron.d/naivepanel", "LogFile": "/var/log/naivepanel-cron.log",
+	})
+	cronHTML := recorder.Body.String()
+	if !strings.Contains(cronHTML, `class="service-status-line"`) {
+		t.Fatalf("Cron service statuses are not on one responsive line:\n%s", cronHTML)
+	}
+
+	recorder = httptest.NewRecorder()
 	server.render(recorder, request, "dashboard", "仪表盘", map[string]any{})
 	if strings.Contains(recorder.Body.String(), ">站点<") ||
 		strings.Contains(recorder.Body.String(), "/caddy/sites") {
 		t.Fatalf("dashboard still contains the sites card:\n%s", recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "logs", "日志", map[string]any{
+		"Service": "operations", "Lines": 200, "Content": "（暂无操作日志）",
+	})
+	logsHTML := recorder.Body.String()
+	operationsAt := strings.Index(logsHTML, "操作日志")
+	caddyAt := strings.Index(logsHTML, ">Caddy</a>")
+	if !strings.Contains(logsHTML, "<h1>日志</h1>") ||
+		operationsAt < 0 || caddyAt < operationsAt {
+		t.Fatalf("operation log tab is missing or misplaced:\n%s", logsHTML)
 	}
 
 	recorder = httptest.NewRecorder()
@@ -140,9 +170,75 @@ func TestNewParsesAllTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, page := range []string{"dashboard", "caddy", "caddy_config", "bypass", "bypass_config", "cron", "cron_form"} {
+	for _, page := range []string{"dashboard", "caddy", "caddy_config", "bypass", "bypass_config", "cron", "cron_form", "logs"} {
 		if server.pages[page] == nil {
 			t.Errorf("template %q was not parsed", page)
+		}
+	}
+}
+
+func TestFilterOperationLogs(t *testing.T) {
+	journal := "startup\n" +
+		"one " + operationLogMarker + " status=200\n" +
+		"noise\n" +
+		"two " + operationLogMarker + " status=303\n" +
+		"three " + operationLogMarker + " status=403\n"
+	got := filterOperationLogs(journal, 2)
+	if strings.Contains(got, "one ") || strings.Contains(got, "noise") ||
+		!strings.Contains(got, "two ") || !strings.Contains(got, "three ") {
+		t.Fatalf("unexpected filtered operation log:\n%s", got)
+	}
+	if got := filterOperationLogs("ordinary journal line\n", 100); got != "（暂无操作日志）" {
+		t.Fatalf("unexpected empty-state text: %q", got)
+	}
+}
+
+func TestProtectedPostWritesSafeOperationLog(t *testing.T) {
+	server, err := New(testConfig(t), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, session, err := server.Sessions.Create("admin", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"_csrf":    {session.CSRF},
+		"password": {"must-not-appear"},
+	}
+	request := httptest.NewRequest(http.MethodPost,
+		"/manage-test/settings/password?token=must-not-appear",
+		strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.AddCookie(&http.Cookie{Name: "np_session", Value: token})
+	recorder := httptest.NewRecorder()
+
+	var output bytes.Buffer
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	}()
+
+	server.protect(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})(recorder, request)
+
+	got := output.String()
+	for _, want := range []string{
+		operationLogMarker, `user="admin"`, `method="POST"`,
+		`path="/settings/password"`, "status=204",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("operation log missing %q: %s", want, got)
+		}
+	}
+	for _, secret := range []string{"must-not-appear", session.CSRF, "/manage-test"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("operation log leaked %q: %s", secret, got)
 		}
 	}
 }

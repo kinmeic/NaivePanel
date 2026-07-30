@@ -27,8 +27,10 @@
 <div class="cards cron-status-cards">
   <div class="card">
     <h3>{{icon "activity"}}Cron 服务</h3>
-    <p>运行状态：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
-    <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
+    <div class="service-status-line">
+      <span class="service-status-item">服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</span>
+      <span class="service-status-item">开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</span>
+    </div>
     {{if and .Data.Installed (not .Data.Enabled)}}
     <form method="post" action="{{.Base}}/cron/service" class="inline">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
