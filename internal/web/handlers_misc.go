@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
+	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
@@ -12,18 +13,20 @@ import (
 // handleDashboard shows a service overview.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	bcInstalled := s.Bypass.Installed()
+	totpOn, _ := s.Cfg.TOTPState()
+	geoCfg := s.Cfg.GeoSnapshot()
 	data := map[string]any{
 		"Domain":        s.Cfg.Domain,
 		"BasePath":      s.Cfg.BasePath,
-		"HostSite":      s.Cfg.HostSite,
-		"SiteCount":     len(s.Cfg.Sites),
+		"HostSite":      s.Cfg.GetHostSite(),
+		"SiteCount":     len(s.Cfg.SitesSnapshot()),
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
 		"BypassActive":  bcInstalled && sysd.IsActive("bypasscore"),
 		"BypassVersion": s.Bypass.Version(),
 		"PanelActive":   sysd.IsActive("naivepanel"),
-		"Geo":           geo.Stat(s.Cfg.Geo.Dir),
-		"TOTPEnabled":   s.Cfg.TOTPEnabled,
+		"Geo":           geo.Stat(geoCfg.Dir),
+		"TOTPEnabled":   totpOn,
 	}
 	s.render(w, r, "dashboard", "仪表盘", data)
 }
@@ -72,7 +75,7 @@ func (s *Server) handleBypass(w http.ResponseWriter, r *http.Request) {
 
 // handleBypassInstall downloads/updates the binary and unit, then enables it.
 func (s *Server) handleBypassInstall(w http.ResponseWriter, r *http.Request) {
-	tag, err := s.Bypass.Install(s.Cfg.Geo.Mirror)
+	tag, err := s.Bypass.Install(s.Cfg.GeoSnapshot().Mirror)
 	if err != nil {
 		s.setFlash(w, "安装/更新失败: "+err.Error())
 		s.redirect(w, r, "/bypasscore")
@@ -144,16 +147,18 @@ func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 
 // handleGeo shows geodata file status.
 func (s *Server) handleGeo(w http.ResponseWriter, r *http.Request) {
+	geoCfg := s.Cfg.GeoSnapshot()
 	s.render(w, r, "geo", "Geo 数据文件", map[string]any{
-		"Files": geo.Stat(s.Cfg.Geo.Dir),
-		"Dir":   s.Cfg.Geo.Dir,
-		"Geo":   s.Cfg.Geo,
+		"Files": geo.Stat(geoCfg.Dir),
+		"Dir":   geoCfg.Dir,
+		"Geo":   geoCfg,
 	})
 }
 
 // handleGeoUpdate downloads and verifies the latest geodata files.
 func (s *Server) handleGeoUpdate(w http.ResponseWriter, r *http.Request) {
-	if err := geo.Update(s.Cfg.Geo.Dir, s.Cfg.Geo.Mirror); err != nil {
+	geoCfg := s.Cfg.GeoSnapshot()
+	if err := geo.Update(geoCfg.Dir, geoCfg.Mirror); err != nil {
 		s.setFlash(w, "更新失败: "+err.Error())
 		s.redirect(w, r, "/geo")
 		return
@@ -170,9 +175,14 @@ func (s *Server) handleGeoUpdate(w http.ResponseWriter, r *http.Request) {
 
 // handleGeoSettings saves mirror / auto-update preferences.
 func (s *Server) handleGeoSettings(w http.ResponseWriter, r *http.Request) {
-	s.Cfg.Geo.Mirror = r.FormValue("mirror")
-	s.Cfg.Geo.AutoUpdateWeekly = r.FormValue("auto") == "on"
-	if err := s.Cfg.Save(); err != nil {
+	mirror := r.FormValue("mirror")
+	auto := r.FormValue("auto") == "on"
+	err := s.Cfg.Mutate(func(c *config.Config) error {
+		c.Geo.Mirror = mirror
+		c.Geo.AutoUpdateWeekly = auto
+		return nil
+	})
+	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 	} else {
 		s.setFlash(w, "设置已保存（自动更新在面板重启后生效）")

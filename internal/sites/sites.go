@@ -74,10 +74,14 @@ type PanelInfo struct {
 }
 
 // token quotes a Caddyfile token when it contains whitespace or quotes.
+// Newlines are escaped rather than quoted so a value can never break out of
+// its line and inject extra Caddyfile directives.
 func token(s string) string {
 	if s == "" {
 		return `""`
 	}
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
 	if strings.ContainsAny(s, " \t\"'") {
 		return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 	}
@@ -94,6 +98,15 @@ func indent(b *strings.Builder, level int, s string) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+}
+
+// singleLine rejects values containing CR/LF — they would break out of the
+// one-token-per-line structure the renderer emits.
+func singleLine(field, v string) error {
+	if strings.ContainsAny(v, "\r\n") {
+		return fmt.Errorf("%s 不能包含换行", field)
+	}
+	return nil
 }
 
 // Validate performs basic sanity checks on a site before rendering.
@@ -117,6 +130,15 @@ func (s *Site) Validate() error {
 		if a.User == "" || a.Pass == "" {
 			return fmt.Errorf("basic_auth 账号和密码不能为空")
 		}
+		if err := singleLine("basic_auth 账号", a.User); err != nil {
+			return err
+		}
+		if err := singleLine("basic_auth 密码", a.Pass); err != nil {
+			return err
+		}
+	}
+	if err := singleLine("forward_proxy 上游", s.ForwardProxy.Upstream); err != nil {
+		return err
 	}
 	switch s.Web.Type {
 	case "", WebNone:
@@ -136,12 +158,24 @@ func (s *Site) Validate() error {
 	default:
 		return fmt.Errorf("未知的站点类型 %q", s.Web.Type)
 	}
+	for _, v := range []struct{ field, val string }{
+		{"站点目录", s.Web.Root},
+		{"php-fpm socket", s.Web.PHPSocket},
+		{"上游地址", s.Web.ProxyTo},
+	} {
+		if err := singleLine(v.field, v.val); err != nil {
+			return err
+		}
+	}
 	for i, eb := range s.ExtraBlocks {
 		if eb.Type != BlockHandle && eb.Type != BlockHandlePath {
 			return fmt.Errorf("自定义块 #%d 类型必须是 handle 或 handle_path", i+1)
 		}
 		if eb.Matcher == "" {
 			return fmt.Errorf("自定义块 #%d 的匹配路径不能为空", i+1)
+		}
+		if err := singleLine(fmt.Sprintf("自定义块 #%d 的匹配路径", i+1), eb.Matcher); err != nil {
+			return err
 		}
 		if strings.TrimSpace(eb.Content) == "" {
 			return fmt.Errorf("自定义块 #%d 的内容不能为空", i+1)

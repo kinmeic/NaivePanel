@@ -66,6 +66,9 @@ func main() {
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       60 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	log.Printf("NaivePanel %s 监听 %s，面板路径 %s（经 Caddy 反代 https://%s%s/）",
 		version, cfg.Listen, cfg.BasePath, cfg.HostSite, cfg.BasePath)
@@ -79,7 +82,8 @@ func geoAutoUpdate(cfg *config.Config) {
 	ticker := time.NewTicker(7 * 24 * time.Hour)
 	defer ticker.Stop()
 	for range ticker.C {
-		if err := geo.Update(cfg.Geo.Dir, cfg.Geo.Mirror); err != nil {
+		g := cfg.GeoSnapshot()
+		if err := geo.Update(g.Dir, g.Mirror); err != nil {
 			log.Printf("geo 自动更新失败: %v", err)
 			continue
 		}

@@ -182,8 +182,9 @@ func (m *Manager) ReadConfig() ([]byte, error) {
 }
 
 // EnsureSocksInbound makes sure the config contains the local SOCKS5 inbound
-// that receives Caddy forward_proxy traffic. It returns true when the config
-// was changed (caller should ApplyConfig it).
+// that receives Caddy forward_proxy traffic. An existing caddy-forward entry
+// is updated in place when the port changed (never duplicated). It returns
+// true when the config was changed (caller should ApplyConfig it).
 func EnsureSocksInbound(content []byte, port int) ([]byte, bool, error) {
 	var root map[string]any
 	if len(bytes.TrimSpace(content)) == 0 {
@@ -198,6 +199,12 @@ func EnsureSocksInbound(content []byte, port int) ([]byte, bool, error) {
 				if p, ok := m["port"].(float64); ok && int(p) == port {
 					return content, false, nil // already present
 				}
+				m["port"] = float64(port) // port changed: update in place
+				out, err := json.MarshalIndent(root, "", "  ")
+				if err != nil {
+					return nil, false, err
+				}
+				return out, true, nil
 			}
 		}
 	}

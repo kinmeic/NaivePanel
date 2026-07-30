@@ -2,7 +2,10 @@ package bypasscore
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,10 +86,12 @@ func (m *Manager) Install(mirror string) (string, error) {
 	}
 	want := assetName()
 	url := ""
+	assetFile := ""
 	for _, a := range rel.Assets {
 		name := strings.TrimSuffix(a.Name, ".tar.gz")
 		if name == want || (want == assetARM64 && name == assetARM64OW) {
 			url = a.URL
+			assetFile = a.Name
 			if name == want {
 				break
 			}
@@ -95,7 +100,30 @@ func (m *Manager) Install(mirror string) (string, error) {
 	if url == "" {
 		return "", fmt.Errorf("release %s 中没有适配 %s 的二进制", rel.TagName, runtime.GOARCH)
 	}
-	if err := downloadAndExtract(url, m.cfg.BypassCore.BinPath); err != nil {
+	// Integrity: verify the tarball against the release's SHA256SUMS before
+	// it gets installed and run as root.
+	sumsURL := ""
+	for _, a := range rel.Assets {
+		if a.Name == "SHA256SUMS" {
+			sumsURL = a.URL
+			break
+		}
+	}
+	if sumsURL == "" {
+		return "", fmt.Errorf("release %s 缺少 SHA256SUMS 校验文件，中止安装", rel.TagName)
+	}
+	sums, err := fetchBytes(sumsURL)
+	if err != nil {
+		return "", fmt.Errorf("下载 SHA256SUMS 失败: %w", err)
+	}
+	digest, err := sha256ForAsset(sums, assetFile)
+	if err != nil {
+		return "", err
+	}
+	if err := downloadAndExtract(url, digest, m.cfg.BypassCore.BinPath); err != nil {
+		return "", err
+	}
+	if err := m.smokeCheck(); err != nil {
 		return "", err
 	}
 	if err := m.writeUnit(); err != nil {
@@ -104,9 +132,55 @@ func (m *Manager) Install(mirror string) (string, error) {
 	return rel.TagName, nil
 }
 
-// downloadAndExtract fetches a .tar.gz containing a single binary and
-// installs it atomically to dest with 0755.
-func downloadAndExtract(url, dest string) error {
+// smokeCheck runs the freshly installed binary once to catch corrupted or
+// wrong-architecture downloads before the service is (re)started.
+func (m *Manager) smokeCheck() error {
+	cmd := exec.Command(m.cfg.BypassCore.BinPath, "--version")
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("新二进制自检失败（已保留在 %s，请排查）: %v: %s",
+			m.cfg.BypassCore.BinPath, err, strings.TrimSpace(out.String()))
+	}
+	return nil
+}
+
+// fetchBytes downloads a URL with a sane size cap.
+func fetchBytes(url string) ([]byte, error) {
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("下载 %s 返回 %d", url, resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+}
+
+// sha256ForAsset extracts the expected hex digest for filename from a
+// coreutils-style SHA256SUMS file.
+func sha256ForAsset(sums []byte, filename string) (string, error) {
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		name := strings.TrimPrefix(fields[1], "*")
+		if name == filename {
+			h := strings.ToLower(fields[0])
+			if len(h) != 64 {
+				break
+			}
+			return h, nil
+		}
+	}
+	return "", fmt.Errorf("SHA256SUMS 中找不到 %s 的校验值", filename)
+}
+
+// downloadAndExtract fetches a .tar.gz containing a single binary, verifies
+// its sha256 against wantHex, and installs it atomically to dest with 0755.
+func downloadAndExtract(url, wantHex, dest string) error {
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("下载失败: %w", err)
@@ -115,7 +189,16 @@ func downloadAndExtract(url, dest string) error {
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("下载返回 %d", resp.StatusCode)
 	}
-	gz, err := gzip.NewReader(resp.Body)
+	// 压缩包体积上限，防异常大包耗尽磁盘。
+	blob, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+	if err != nil {
+		return fmt.Errorf("读取下载内容失败: %w", err)
+	}
+	sum := sha256.Sum256(blob)
+	if got := hex.EncodeToString(sum[:]); got != wantHex {
+		return fmt.Errorf("SHA256 校验失败（期望 %s，实际 %s），已中止安装", wantHex, got)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(blob))
 	if err != nil {
 		return err
 	}
@@ -144,7 +227,8 @@ func downloadAndExtract(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, bin); err != nil {
+	// 解压上限，防 gzip bomb。
+	if _, err := io.Copy(f, io.LimitReader(bin, 512<<20)); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return err

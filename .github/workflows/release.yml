@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          check-latest: true
+
+      - name: Vet & test
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Cross-compile (linux amd64 + arm64)
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o naivepanel ./cmd/naivepanel
+            tar -czf "naivepanel-linux-${arch}.tar.gz" naivepanel
+          done
+          rm -f naivepanel
+          sha256sum naivepanel-linux-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            naivepanel-linux-amd64.tar.gz
+            naivepanel-linux-arm64.tar.gz
+            SHA256SUMS
+          generate_release_notes: true

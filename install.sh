@@ -55,14 +55,17 @@ echo
 echo "========== NaivePanel 安装配置 =========="
 read -rp "服务器域名（首个站点 & 面板寄宿域名）: " DOMAIN
 [[ -n "$DOMAIN" ]] || die "域名不能为空"
+[[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "域名含非法字符（仅允许字母、数字、点、连字符）"
 
 DEFAULT_PATH="/manage-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 read -rp "面板访问路径 [${DEFAULT_PATH}]: " BASE_PATH
 BASE_PATH="${BASE_PATH:-$DEFAULT_PATH}"
 [[ "$BASE_PATH" == /* ]] || BASE_PATH="/$BASE_PATH"
+[[ "$BASE_PATH" =~ ^/[A-Za-z0-9/_-]+$ ]] || die "面板路径含非法字符（仅允许字母、数字、/、_、-）"
 
 read -rp "管理员账号 [admin]: " ADMIN_USER
 ADMIN_USER="${ADMIN_USER:-admin}"
+[[ "$ADMIN_USER" =~ ^[A-Za-z0-9_-]+$ ]] || die "管理员账号含非法字符（仅允许字母、数字、_、-）"
 
 while true; do
   read -rsp "管理员密码（至少 10 位）: " ADMIN_PASS; echo
@@ -189,7 +192,7 @@ ok "面板二进制: $PANEL_BIN"
 # ---------- 7. 生成面板配置 ----------
 mkdir -p "$PANEL_CONFIG_DIR" "$CADDY_SITES_DIR"
 chmod 700 "$PANEL_CONFIG_DIR"
-PASS_HASH="$("$PANEL_BIN" hash-password "$ADMIN_PASS")"
+PASS_HASH="$(printf '%s\n' "$ADMIN_PASS" | "$PANEL_BIN" hash-password 2>/dev/null)"
 unset ADMIN_PASS ADMIN_PASS2
 # 面板 HTTPS 门禁共享密钥：Caddy 反代注入 header_up，面板拒绝无此头的请求
 PROXY_TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"

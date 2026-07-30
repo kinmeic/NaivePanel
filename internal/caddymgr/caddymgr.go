@@ -42,9 +42,9 @@ func (m *Manager) renderAll(importDir string) (map[string]string, error) {
 		"Caddyfile": sites.RenderMain("admin@"+m.cfg.Domain, importDir),
 	}
 	panel := sites.PanelInfo{BasePath: m.cfg.BasePath, Listen: m.cfg.Listen, ProxyToken: m.cfg.ProxyToken}
-	for i := range m.cfg.Sites {
-		s := &m.cfg.Sites[i]
-		snippet, err := sites.Render(s, panel, s.Domain == m.cfg.HostSite, m.cfg.BypassCore.SocksPort)
+	hostSite := m.cfg.GetHostSite()
+	for _, s := range m.cfg.SitesSnapshot() {
+		snippet, err := sites.Render(&s, panel, s.Domain == hostSite, m.cfg.BypassCore.SocksPort)
 		if err != nil {
 			return nil, fmt.Errorf("渲染站点 %s: %w", s.Domain, err)
 		}
@@ -56,7 +56,7 @@ func (m *Manager) renderAll(importDir string) (map[string]string, error) {
 // RenderSite renders a single site snippet (for preview, unsaved sites OK).
 func (m *Manager) RenderSite(s *sites.Site) (string, error) {
 	panel := sites.PanelInfo{BasePath: m.cfg.BasePath, Listen: m.cfg.Listen, ProxyToken: m.cfg.ProxyToken}
-	return sites.Render(s, panel, s.Domain == m.cfg.HostSite, m.cfg.BypassCore.SocksPort)
+	return sites.Render(s, panel, s.Domain == m.cfg.GetHostSite(), m.cfg.BypassCore.SocksPort)
 }
 
 // Preview returns a combined, human-readable view of the whole Caddy config.

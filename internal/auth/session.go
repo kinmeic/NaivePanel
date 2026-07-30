@@ -7,6 +7,7 @@ import (
 )
 
 // Session is an authenticated (or half-authenticated) user session.
+// Its mutable fields are guarded by mu; use the accessor methods.
 type Session struct {
 	User       string
 	CSRF       string
@@ -17,6 +18,62 @@ type Session struct {
 	// PendingTOTPSecret / PendingTOTPURL hold an MFA enrollment in progress.
 	PendingTOTPSecret string
 	PendingTOTPURL    string
+
+	// FailedMFA counts consecutive failed second-factor attempts; the
+	// session is destroyed once it reaches maxMFAFails.
+	FailedMFA int
+
+	mu sync.Mutex
+}
+
+// maxMFAFails caps second-factor guesses per pending session.
+const maxMFAFails = 5
+
+// IsPendingMFA reports whether the session still awaits the second factor.
+func (s *Session) IsPendingMFA() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.PendingMFA
+}
+
+// Promote clears the pending-MFA flag after successful TOTP verification.
+func (s *Session) Promote() {
+	s.mu.Lock()
+	s.PendingMFA = false
+	s.FailedMFA = 0
+	s.mu.Unlock()
+}
+
+// IncrMFAFail records one failed second-factor attempt and reports whether
+// the session has exhausted its allowed attempts.
+func (s *Session) IncrMFAFail() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.FailedMFA++
+	return s.FailedMFA >= maxMFAFails
+}
+
+// SetPendingTOTP stores an in-progress MFA enrollment.
+func (s *Session) SetPendingTOTP(secret, otpauthURL string) {
+	s.mu.Lock()
+	s.PendingTOTPSecret = secret
+	s.PendingTOTPURL = otpauthURL
+	s.mu.Unlock()
+}
+
+// PendingTOTP returns the in-progress MFA enrollment, if any.
+func (s *Session) PendingTOTP() (secret, otpauthURL string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.PendingTOTPSecret, s.PendingTOTPURL
+}
+
+// ClearPendingTOTP discards the in-progress enrollment.
+func (s *Session) ClearPendingTOTP() {
+	s.mu.Lock()
+	s.PendingTOTPSecret = ""
+	s.PendingTOTPURL = ""
+	s.mu.Unlock()
 }
 
 // Store keeps sessions in memory; a panel restart logs everyone out.
@@ -34,7 +91,8 @@ func NewStore(ttl time.Duration) *Store {
 	return &Store{ttl: ttl, m: make(map[string]*Session)}
 }
 
-// Create issues a new session token.
+// Create issues a new session token. Expired sessions are swept on each
+// create so pending-MFA leftovers cannot accumulate.
 func (s *Store) Create(user string, pendingMFA bool) (string, *Session, error) {
 	tok, err := RandomToken()
 	if err != nil {
@@ -52,9 +110,20 @@ func (s *Store) Create(user string, pendingMFA bool) (string, *Session, error) {
 		PendingMFA: pendingMFA,
 	}
 	s.mu.Lock()
+	s.sweepLocked()
 	s.m[tok] = sess
 	s.mu.Unlock()
 	return tok, sess, nil
+}
+
+// sweepLocked removes expired sessions; caller must hold s.mu.
+func (s *Store) sweepLocked() {
+	now := time.Now()
+	for tok, sess := range s.m {
+		if now.After(sess.Expires) {
+			delete(s.m, tok)
+		}
+	}
 }
 
 // Get returns a session by token, or nil. Expired sessions are removed.
@@ -72,19 +141,22 @@ func (s *Store) Get(token string) *Session {
 	return sess
 }
 
-// Promote clears the pending-MFA flag after successful TOTP verification.
-func (s *Store) Promote(token string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sess := s.m[token]; sess != nil {
-		sess.PendingMFA = false
-	}
-}
-
 // Destroy removes a session.
 func (s *Store) Destroy(token string) {
 	s.mu.Lock()
 	delete(s.m, token)
+	s.mu.Unlock()
+}
+
+// DestroyAll removes every session except the one passed (typically the
+// caller's own), e.g. after a password or MFA change.
+func (s *Store) DestroyAll(exceptToken string) {
+	s.mu.Lock()
+	for tok := range s.m {
+		if tok != exceptToken {
+			delete(s.m, tok)
+		}
+	}
 	s.mu.Unlock()
 }
 
@@ -134,6 +206,10 @@ type Limiter struct {
 	fails    map[string]*failRec
 }
 
+// maxLimiterEntries bounds the limiter map; the login endpoint is public so
+// an attacker could otherwise grow memory with unlimited distinct keys.
+const maxLimiterEntries = 10000
+
 type failRec struct {
 	count     int
 	lockUntil time.Time
@@ -166,6 +242,12 @@ func (l *Limiter) Allow(key string) bool {
 func (l *Limiter) Fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.fails) >= maxLimiterEntries {
+		l.sweepLocked()
+	}
+	if len(l.fails) >= maxLimiterEntries {
+		return // map still full and nothing expired: drop the new key
+	}
 	rec := l.fails[key]
 	if rec == nil {
 		rec = &failRec{}
@@ -175,6 +257,16 @@ func (l *Limiter) Fail(key string) {
 	if rec.count >= l.maxFails {
 		rec.lockUntil = time.Now().Add(l.lockFor)
 		rec.count = 0
+	}
+}
+
+// sweepLocked removes entries whose lock has expired; caller holds l.mu.
+func (l *Limiter) sweepLocked() {
+	now := time.Now()
+	for k, rec := range l.fails {
+		if !rec.lockUntil.IsZero() && now.After(rec.lockUntil) {
+			delete(l.fails, k)
+		}
 	}
 }
 

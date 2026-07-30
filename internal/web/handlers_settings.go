@@ -7,30 +7,33 @@ import (
 	"net/http"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
+	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/pquerna/otp"
 )
 
 // handleSettings shows the settings page.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	totpOn, _ := s.Cfg.TOTPState()
 	data := map[string]any{
 		"Domain":         s.Cfg.Domain,
 		"BasePath":       s.Cfg.BasePath,
 		"Listen":         s.Cfg.Listen,
-		"HostSite":       s.Cfg.HostSite,
-		"TOTPEnabled":    s.Cfg.TOTPEnabled,
-		"RecoveryLeft":   len(s.Cfg.RecoveryHashes),
-		"Sites":          s.Cfg.Sites,
+		"HostSite":       s.Cfg.GetHostSite(),
+		"TOTPEnabled":    totpOn,
+		"RecoveryLeft":   s.Cfg.RecoveryCount(),
+		"Sites":          s.Cfg.SitesSnapshot(),
 		"SocksPort":      s.Cfg.BypassCore.SocksPort,
 		"PendingTOTPQR":  "",
 		"PendingTOTPSet": false,
 	}
-	if sess := s.session(r); sess != nil && sess.PendingTOTPSecret != "" {
-		qr, err := totpQR(sess.PendingTOTPURL)
-		if err == nil {
-			data["PendingTOTPQR"] = qr
-			data["PendingTOTPURL"] = sess.PendingTOTPURL
-			data["PendingTOTPSecret"] = sess.PendingTOTPSecret
-			data["PendingTOTPSet"] = true
+	if sess := s.session(r); sess != nil {
+		if secret, otpauthURL := sess.PendingTOTP(); secret != "" {
+			if qr, err := totpQR(otpauthURL); err == nil {
+				data["PendingTOTPQR"] = qr
+				data["PendingTOTPURL"] = otpauthURL
+				data["PendingTOTPSecret"] = secret
+				data["PendingTOTPSet"] = true
+			}
 		}
 	}
 	s.render(w, r, "settings", "设置", data)
@@ -58,7 +61,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	cur := r.FormValue("current")
 	new1 := r.FormValue("new1")
 	new2 := r.FormValue("new2")
-	if !auth.VerifyPassword(cur, s.Cfg.AdminPassHash) {
+	if !auth.VerifyPassword(cur, s.Cfg.GetAdminPassHash()) {
 		s.setFlash(w, "当前密码错误")
 		s.redirect(w, r, "/settings")
 		return
@@ -79,11 +82,16 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/settings")
 		return
 	}
-	s.Cfg.AdminPassHash = h
-	if err := s.Cfg.Save(); err != nil {
+	err = s.Cfg.Mutate(func(c *config.Config) error {
+		c.AdminPassHash = h
+		return nil
+	})
+	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 	} else {
-		s.setFlash(w, "密码已修改")
+		// Kick every other session: they authenticated with the old password.
+		s.Sessions.DestroyAll(auth.TokenFromRequest(r))
+		s.setFlash(w, "密码已修改，其他登录会话已失效")
 	}
 	s.redirect(w, r, "/settings")
 }
@@ -91,7 +99,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 // handleTOTPSetup starts MFA enrollment: generates a secret kept in the
 // session until confirmed.
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
-	if s.Cfg.TOTPEnabled {
+	if totpOn, _ := s.Cfg.TOTPState(); totpOn {
 		s.setFlash(w, "MFA 已启用，如需重置请先关闭")
 		s.redirect(w, r, "/settings")
 		return
@@ -107,8 +115,7 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/login")
 		return
 	}
-	sess.PendingTOTPSecret = secret
-	sess.PendingTOTPURL = otpauthURL
+	sess.SetPendingTOTP(secret, otpauthURL)
 	s.redirect(w, r, "/settings")
 }
 
@@ -116,12 +123,17 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 // one-time recovery codes shown exactly once.
 func (s *Server) handleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	sess := s.session(r)
-	if sess == nil || sess.PendingTOTPSecret == "" {
+	if sess == nil {
+		s.redirect(w, r, "/settings")
+		return
+	}
+	secret, _ := sess.PendingTOTP()
+	if secret == "" {
 		s.redirect(w, r, "/settings")
 		return
 	}
 	code := r.FormValue("code")
-	if !auth.VerifyTOTP(sess.PendingTOTPSecret, code) {
+	if !auth.VerifyTOTP(secret, code) {
 		s.setFlash(w, "验证码错误，请重试")
 		s.redirect(w, r, "/settings")
 		return
@@ -132,36 +144,45 @@ func (s *Server) handleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/settings")
 		return
 	}
-	s.Cfg.TOTPSecret = sess.PendingTOTPSecret
-	s.Cfg.TOTPEnabled = true
-	s.Cfg.RecoveryHashes = hashes
-	if err := s.Cfg.Save(); err != nil {
+	err = s.Cfg.Mutate(func(c *config.Config) error {
+		c.TOTPSecret = secret
+		c.TOTPEnabled = true
+		c.RecoveryHashes = hashes
+		return nil
+	})
+	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 		s.redirect(w, r, "/settings")
 		return
 	}
-	sess.PendingTOTPSecret = ""
+	sess.ClearPendingTOTP()
 	s.render(w, r, "recovery", "恢复码（仅显示一次）", map[string]any{"Codes": codes})
 }
 
 // handleTOTPDisable turns MFA off after password + current TOTP check.
 func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
-	if !auth.VerifyPassword(r.FormValue("password"), s.Cfg.AdminPassHash) {
+	if !auth.VerifyPassword(r.FormValue("password"), s.Cfg.GetAdminPassHash()) {
 		s.setFlash(w, "密码错误")
 		s.redirect(w, r, "/settings")
 		return
 	}
-	if !auth.VerifyTOTP(s.Cfg.TOTPSecret, r.FormValue("code")) {
+	_, secret := s.Cfg.TOTPState()
+	if !auth.VerifyTOTP(secret, r.FormValue("code")) {
 		s.setFlash(w, "TOTP 验证码错误")
 		s.redirect(w, r, "/settings")
 		return
 	}
-	s.Cfg.TOTPEnabled = false
-	s.Cfg.TOTPSecret = ""
-	s.Cfg.RecoveryHashes = nil
-	if err := s.Cfg.Save(); err != nil {
+	err := s.Cfg.Mutate(func(c *config.Config) error {
+		c.TOTPEnabled = false
+		c.TOTPSecret = ""
+		c.RecoveryHashes = nil
+		return nil
+	})
+	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 	} else {
+		// MFA requirements changed; other sessions re-authenticate.
+		s.Sessions.DestroyAll(auth.TokenFromRequest(r))
 		s.setFlash(w, "MFA 已关闭")
 	}
 	s.redirect(w, r, "/settings")
@@ -175,21 +196,25 @@ func (s *Server) handleHostSite(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/settings")
 		return
 	}
-	old := s.Cfg.HostSite
-	s.Cfg.HostSite = target
-	if err := s.Cfg.Save(); err != nil {
-		s.Cfg.HostSite = old
+	old := s.Cfg.GetHostSite()
+	err := s.Cfg.Mutate(func(c *config.Config) error {
+		c.HostSite = target
+		return nil
+	})
+	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 		s.redirect(w, r, "/settings")
 		return
 	}
 	if err := s.Caddy.Apply(); err != nil {
-		s.Cfg.HostSite = old
-		_ = s.Cfg.Save()
+		_ = s.Cfg.Mutate(func(c *config.Config) error {
+			c.HostSite = old
+			return nil
+		})
 		s.setFlash(w, "迁移失败已回滚: "+err.Error())
 		s.redirect(w, r, "/settings")
 		return
 	}
-	s.setFlash(w, "面板寄宿站点已迁移到 " + target + "，请记住新的访问地址")
+	s.setFlash(w, "面板寄宿站点已迁移到 "+target+"，请记住新的访问地址")
 	s.redirect(w, r, "/settings")
 }

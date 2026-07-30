@@ -12,12 +12,14 @@ BypassCore 分流核心与 Geo 数据文件。
 - **forward_proxy**：basic_auth 多账号、upstream 配置（可联动本机 BypassCore），
   hide_ip / hide_via / probe_resistance 固定注入
 - **配置预览**：单站片段实时预览 + 全局 Caddy 配置合并预览
-- **BypassCore**：一键安装/更新（GitHub release，amd64/arm64）、配置编辑
-  （`-check-config` → 控制面事务热重载）、服务控制、运行状态查看
+- **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
+  配置编辑（`-check-config` → 控制面事务热重载）、服务控制、运行状态查看
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 
 ## 安装
+
+### 方式一：一体化脚本（推荐，全新服务器）
 
 在 Debian 11+ / Ubuntu 20.04+（amd64 / arm64）的**全新或已有 Caddy** 服务器上：
 
@@ -29,6 +31,111 @@ sudo bash install.sh
 xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板并生成初始配置。
 
 安装完成后访问 `https://<域名>/<面板路径>/` 登录（路径仅显示一次，请保存）。
+
+### 方式二：预编译二进制（已有 Caddy / Caddy + forwardproxy 的服务器）
+
+适用于 Caddy 已经在跑、不想动现有环境的机器。先确认你的 Caddy 属于哪种：
+
+- **已含 `klzgrad/forwardproxy@naive` 插件**（自行 xcaddy 编译过，或按方式一装过）：全部功能可用
+- **官方原版 Caddy**：静态站 / PHP 站 / 反向代理站均可用；站点一旦启用 forward_proxy，
+  `caddy validate` 会失败并自动回滚。需要代理功能时重编译一个：
+
+  ```bash
+  xcaddy build v2.10.2 --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+  ```
+
+以下以 Debian/Ubuntu + systemd + amd64 为例（arm64 把 `linux-amd64` 换成 `linux-arm64`），
+把 `example.com`、管理员密码替换为你的实际值：
+
+```bash
+# 1. 下载 release 并校验完整性（版本号换成最新 tag）
+VER=v0.1.0
+cd /tmp
+curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
+curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
+grep "linux-amd64.tar.gz" SHA256SUMS | sha256sum -c -
+tar -xzf naivepanel-linux-amd64.tar.gz
+sudo install -m 0755 naivepanel /usr/local/bin/naivepanel
+
+# 2. 生成密码哈希、随机面板路径、反代共享密钥（密码经 stdin 输入，不留 ps/历史记录）
+PASS_HASH="$(/usr/local/bin/naivepanel hash-password)"   # 回车后输入密码
+BASE_PATH="$(/usr/local/bin/naivepanel gen-path)"
+PROXY_TOKEN="$(openssl rand -hex 24)"
+
+# 3. 写面板配置
+sudo mkdir -p /etc/naivepanel /etc/caddy/sites
+sudo tee /etc/naivepanel/config.yaml >/dev/null <<EOF
+listen: 127.0.0.1:9000
+domain: example.com
+base_path: ${BASE_PATH}
+admin_user: admin
+admin_pass_hash: '${PASS_HASH}'
+totp_enabled: false
+host_site: example.com
+session_ttl_hours: 12
+proxy_token: '${PROXY_TOKEN}'
+caddy:
+  bin: $(command -v caddy)
+  main_file: /etc/caddy/Caddyfile
+  sites_dir: /etc/caddy/sites
+bypasscore:
+  socks_port: 1080
+  bin_path: /usr/local/bin/bypasscore
+  config_path: /etc/bypasscore/config.json
+  control_sock: /run/bypasscore/control.sock
+  work_dir: /etc/bypasscore
+geo:
+  dir: /etc/bypasscore
+  auto_update_weekly: false
+backup_dir: /etc/naivepanel/backups
+sites:
+  - domain: example.com
+    forward_proxy:
+      enabled: false
+      accounts: []
+    web:
+      type: static
+      root: /var/www/example.com
+EOF
+sudo chmod 600 /etc/naivepanel/config.yaml
+```
+
+> - `caddy.bin` 取服务器上实际的 caddy 路径；`main_file` / `sites_dir` 按你的布局调整。
+> - **注意**：面板保存站点时会把 `main_file` 重写为「email + import sites_dir」的极简形式。
+>   如果你在主 Caddyfile 里有自定义全局配置，请先迁移到 `sites_dir` 的片段文件中。
+
+```bash
+# 4. 主 Caddyfile 导入片段目录（已有 import 行则跳过，不要覆盖现有配置）
+grep -q 'import /etc/caddy/sites' /etc/caddy/Caddyfile 2>/dev/null || \
+  printf '{\n\temail admin@example.com\n}\n\nimport /etc/caddy/sites/*.caddy\n' | sudo tee /etc/caddy/Caddyfile
+
+# 5. 面板寄宿站点的引导片段（面板上线后由它接管渲染，此处仅为首次拉起面板）
+sudo tee "/etc/caddy/sites/example.com.caddy" >/dev/null <<EOF
+:443, example.com {
+	route {
+		handle ${BASE_PATH}/* {
+			reverse_proxy 127.0.0.1:9000 {
+				header_up X-NaivePanel-Key ${PROXY_TOKEN}
+			}
+		}
+		redir ${BASE_PATH} ${BASE_PATH}/ 308
+
+		root * /var/www/example.com
+		encode gzip zstd
+		file_server
+	}
+}
+EOF
+sudo chmod 600 /etc/caddy/sites/example.com.caddy
+sudo mkdir -p /var/www/example.com
+
+# 6. 校验并重载 Caddy，注册并启动面板服务
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy || sudo systemctl restart caddy
+sudo /usr/local/bin/naivepanel install -config /etc/naivepanel/config.yaml -bin /usr/local/bin/naivepanel
+```
+
+完成后访问 `https://example.com${BASE_PATH}/`，建议立即到「设置」启用 MFA。
 
 ## 服务管理子命令
 

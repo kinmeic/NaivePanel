@@ -89,11 +89,7 @@ func accountsText(st *sites.Site) string {
 // applyWithRollback saves the site change and applies it to Caddy, reverting
 // the model when the pipeline fails.
 func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
-	oldIdx := s.Cfg.FindSite(st.Domain)
-	var old sites.Site
-	if oldIdx >= 0 {
-		old = s.Cfg.Sites[oldIdx]
-	}
+	old, _ := s.Cfg.GetSite(st.Domain)
 	if err := s.Cfg.UpsertSite(*st); err != nil {
 		return err
 	}
@@ -111,8 +107,8 @@ func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
 
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "sites", "站点管理", map[string]any{
-		"Sites":    s.Cfg.Sites,
-		"HostSite": s.Cfg.HostSite,
+		"Sites":    s.Cfg.SitesSnapshot(),
+		"HostSite": s.Cfg.GetHostSite(),
 	})
 }
 
@@ -122,7 +118,7 @@ func (s *Server) handleSiteNew(w http.ResponseWriter, r *http.Request) {
 		Site: sites.Site{
 			Web: sites.Web{Type: sites.WebStatic, Root: "/var/www/"},
 		},
-		HostSite:   s.Cfg.HostSite,
+		HostSite:   s.Cfg.GetHostSite(),
 		PHPSockets: detectPHPSockets(),
 	})
 }
@@ -147,19 +143,18 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteEdit(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	i := s.Cfg.FindSite(domain)
-	if i < 0 {
+	st, ok := s.Cfg.GetSite(domain)
+	if !ok {
 		s.setFlash(w, "站点不存在")
 		s.redirect(w, r, "/sites")
 		return
 	}
-	st := s.Cfg.Sites[i]
 	preview, _ := s.Caddy.RenderSite(&st)
 	s.render(w, r, "site_form", "编辑站点 "+domain, siteForm{
 		Site:       st,
 		Accounts:   accountsText(&st),
 		Preview:    preview,
-		HostSite:   s.Cfg.HostSite,
+		HostSite:   s.Cfg.GetHostSite(),
 		PHPSockets: detectPHPSockets(),
 	})
 }
@@ -191,13 +186,21 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	st, ok := s.Cfg.GetSite(domain)
+	if !ok {
+		s.setFlash(w, "站点不存在")
+		s.redirect(w, r, "/sites")
+		return
+	}
 	if err := s.Cfg.DeleteSite(domain); err != nil {
 		s.setFlash(w, err.Error())
 		s.redirect(w, r, "/sites")
 		return
 	}
 	if err := s.Caddy.Apply(); err != nil {
-		s.setFlash(w, "站点已删除，但 Caddy 重载失败: "+err.Error())
+		// Caddy 回滚后仍在运行旧配置，把站点加回模型保持一致。
+		_ = s.Cfg.UpsertSite(st)
+		s.setFlash(w, "删除失败，站点已保留: "+err.Error())
 		s.redirect(w, r, "/sites")
 		return
 	}
@@ -232,7 +235,7 @@ func (s *Server) renderFormError(w http.ResponseWriter, r *http.Request, st *sit
 		Accounts:   accountsText(st),
 		Preview:    preview,
 		Error:      err.Error(),
-		HostSite:   s.Cfg.HostSite,
+		HostSite:   s.Cfg.GetHostSite(),
 		PHPSockets: detectPHPSockets(),
 	}
 	title := "编辑站点 " + st.Domain

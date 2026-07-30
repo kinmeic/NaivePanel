@@ -3,6 +3,7 @@ package web
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -116,7 +117,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/login", s.handleLoginPOST)
 	s.mux.HandleFunc("GET "+bp+"/login/totp", s.handleTOTPGET)
 	s.mux.HandleFunc("POST "+bp+"/login/totp", s.handleTOTPPOST)
-	s.mux.HandleFunc("POST "+bp+"/logout", s.handleLogout)
+	s.mux.HandleFunc("POST "+bp+"/logout", s.protect(s.handleLogout))
 
 	s.mux.HandleFunc("GET "+bp+"/{$}", s.protect(s.handleDashboard))
 
@@ -158,8 +159,9 @@ func (s *Server) Handler() http.Handler {
 // proxy, identified by the shared-secret header Caddy injects via header_up.
 // Direct/plaintext-HTTP hits get an indistinguishable 404.
 func (s *Server) proxyGate(next http.Handler) http.Handler {
+	want := []byte(s.Cfg.ProxyToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.Cfg.ProxyToken != "" && r.Header.Get(sites.ProxyTokenHeader) != s.Cfg.ProxyToken {
+		if len(want) > 0 && subtle.ConstantTimeCompare([]byte(r.Header.Get(sites.ProxyTokenHeader)), want) != 1 {
 			http.NotFound(w, r)
 			return
 		}
@@ -186,12 +188,12 @@ func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 			http.Redirect(w, r, s.Cfg.BasePath+"/login", http.StatusSeeOther)
 			return
 		}
-		if sess.PendingMFA {
+		if sess.IsPendingMFA() {
 			http.Redirect(w, r, s.Cfg.BasePath+"/login/totp", http.StatusSeeOther)
 			return
 		}
 		if r.Method == http.MethodPost {
-			if r.FormValue("_csrf") != sess.CSRF {
+			if subtle.ConstantTimeCompare([]byte(r.FormValue("_csrf")), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "CSRF 校验失败", http.StatusForbidden)
 				return
 			}
@@ -235,11 +237,18 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title stri
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	buf.WriteTo(w)
 }
 
+// maxFlashLen keeps flash messages well under the browser cookie size cap.
+const maxFlashLen = 1000
+
 // setFlash stores a one-time message in a cookie scoped to the base path.
 func (s *Server) setFlash(w http.ResponseWriter, msg string) {
+	if len(msg) > maxFlashLen {
+		msg = msg[:maxFlashLen] + "…"
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "np_flash",
 		Value:    msg,
