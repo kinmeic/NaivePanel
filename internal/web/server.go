@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -128,6 +129,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteUpdate))
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/delete", s.protect(s.handleSiteDelete))
 	s.mux.HandleFunc("POST "+bp+"/sites/preview-render", s.protect(s.handleSitePreviewRender))
+	s.mux.HandleFunc("POST "+bp+"/sites/import", s.protect(s.handleSiteImport))
+	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/sync-disk", s.protect(s.handleSiteSyncDisk))
+	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/sync-model", s.protect(s.handleSiteSyncModel))
 
 	s.mux.HandleFunc("GET "+bp+"/caddy/preview", s.protect(s.handleCaddyPreview))
 	s.mux.HandleFunc("POST "+bp+"/caddy/reload", s.protect(s.handleCaddyReload))
@@ -241,17 +245,20 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title stri
 	buf.WriteTo(w)
 }
 
-// maxFlashLen keeps flash messages well under the browser cookie size cap.
-const maxFlashLen = 1000
+// maxFlashLen keeps escaped flash messages well under the browser cookie
+// size cap (worst case ~9 bytes per CJK rune after QueryEscape).
+const maxFlashLen = 350
 
 // setFlash stores a one-time message in a cookie scoped to the base path.
+// The value is URL-escaped because cookie values can't carry non-ASCII
+// bytes — net/http would silently strip them.
 func (s *Server) setFlash(w http.ResponseWriter, msg string) {
-	if len(msg) > maxFlashLen {
-		msg = msg[:maxFlashLen] + "…"
+	if len([]rune(msg)) > maxFlashLen {
+		msg = string([]rune(msg)[:maxFlashLen]) + "…"
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "np_flash",
-		Value:    msg,
+		Value:    url.QueryEscape(msg),
 		Path:     s.Cfg.BasePath,
 		HttpOnly: true,
 		Secure:   true,
@@ -269,6 +276,9 @@ func (s *Server) takeFlash(w http.ResponseWriter, r *http.Request) string {
 		Name: "np_flash", Value: "", Path: s.Cfg.BasePath,
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, MaxAge: -1,
 	})
+	if v, err := url.QueryUnescape(c.Value); err == nil {
+		return v
+	}
 	return c.Value
 }
 

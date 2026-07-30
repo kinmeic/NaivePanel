@@ -8,10 +8,11 @@ BypassCore 分流核心与 Geo 数据文件。
 ## 功能
 
 - **站点管理**：静态站 / PHP 站 / 反向代理站 / 纯代理站，自定义 handle / handle_path 块，
-  高级模式（原始 Caddyfile 片段），保存即 `caddy validate → 备份 → reload → 探活 → 失败回滚`
+  高级模式（原始 Caddyfile 片段），保存即 `caddy validate → 备份 → reload → 探活 → 失败回滚`；
+  磁盘与模型漂移检测（以磁盘为准 / 以面板为准双向同步），磁盘上未托管的片段可一键导入
 - **forward_proxy**：basic_auth 多账号、upstream 配置（可联动本机 BypassCore），
   hide_ip / hide_via / probe_resistance 固定注入
-- **配置预览**：单站片段实时预览 + 全局 Caddy 配置合并预览
+- **配置预览**：单站片段实时预览 + 全局三视图（磁盘实况 / `caddy adapt` 运行配置 / 面板模型渲染）
 - **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
   配置编辑（`-check-config` → 控制面事务热重载）、服务控制、运行状态查看
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源

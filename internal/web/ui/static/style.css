@@ -57,6 +57,12 @@ form.inline { display: inline; }
 .muted { color: var(--muted); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
 .tag { background: var(--accent); color: #fff; font-size: 12px; border-radius: 4px; padding: 1px 6px; }
+.tag.warn { background: var(--warn); color: #0a0e18; }
+.tag.bad { background: var(--bad); color: #fff; }
+.tag.muted { background: var(--border); color: var(--muted); }
+
+.tabs { display: flex; gap: 8px; margin: 12px 0; }
+.tabs .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .hidden { display: none; }
 
 .preview {

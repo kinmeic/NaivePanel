@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/config"
@@ -24,10 +25,22 @@ const keepBackups = 20
 // Manager applies panel site models to the on-disk Caddy configuration.
 type Manager struct {
 	cfg *config.Config
+
+	// managed tracks the domains the panel has rendered, so applyLive only
+	// prunes snippets it owns and never deletes foreign files that happen to
+	// sit in the sites directory.
+	mu      sync.Mutex
+	managed map[string]bool
 }
 
 // New creates a Manager bound to the panel config.
-func New(cfg *config.Config) *Manager { return &Manager{cfg: cfg} }
+func New(cfg *config.Config) *Manager {
+	m := &Manager{cfg: cfg, managed: map[string]bool{}}
+	for _, s := range cfg.SitesSnapshot() {
+		m.managed[s.Domain] = true
+	}
+	return m
+}
 
 // RenderAll renders the main Caddyfile and every site snippet into a map of
 // relative path → content (relative to a staging root containing Caddyfile
@@ -202,19 +215,38 @@ func (m *Manager) applyLive(files map[string]string) error {
 	if err := os.MkdirAll(m.cfg.Caddy.SitesDir, 0755); err != nil {
 		return err
 	}
-	// Delete snippets that no longer exist.
+	// Delete snippets the panel manages that are no longer rendered. Foreign
+	// files (never rendered by the panel, or only just imported under a
+	// different file name) are left alone — except ones colliding with a
+	// domain the model now owns under a different file name.
 	want := map[string]bool{}
+	wantDomains := map[string]bool{}
 	for rel := range files {
 		if strings.HasPrefix(rel, "sites/") {
-			want[filepath.Base(rel)] = true
+			base := filepath.Base(rel)
+			want[base] = true
+			wantDomains[strings.TrimSuffix(base, ".caddy")] = true
 		}
 	}
+	m.mu.Lock()
 	entries, _ := os.ReadDir(m.cfg.Caddy.SitesDir)
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".caddy") && !want[e.Name()] {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".caddy") || want[e.Name()] {
+			continue
+		}
+		domain := ""
+		if data, err := os.ReadFile(filepath.Join(m.cfg.Caddy.SitesDir, e.Name())); err == nil {
+			domain = sites.DomainFromHeader(string(data))
+		}
+		if domain == "" {
+			domain = strings.TrimSuffix(e.Name(), ".caddy")
+		}
+		if m.managed[domain] || wantDomains[domain] {
 			os.Remove(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()))
 		}
 	}
+	m.managed = wantDomains
+	m.mu.Unlock()
 	for rel, content := range files {
 		if !strings.HasPrefix(rel, "sites/") {
 			continue

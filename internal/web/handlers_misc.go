@@ -31,12 +31,31 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "dashboard", "仪表盘", data)
 }
 
-// handleCaddyPreview shows the merged Caddy configuration.
+// handleCaddyPreview shows the Caddy configuration. ?view=files (default)
+// shows the real on-disk files; ?view=adapt shows `caddy adapt` JSON (what
+// Caddy actually parsed); ?view=render shows what the panel model would write.
 func (s *Server) handleCaddyPreview(w http.ResponseWriter, r *http.Request) {
-	preview, err := s.Caddy.Preview()
-	data := map[string]any{"Preview": preview}
-	if err != nil {
-		data["Error"] = err.Error()
+	view := r.URL.Query().Get("view")
+	if view == "" {
+		view = "files"
+	}
+	data := map[string]any{"View": view}
+	switch view {
+	case "adapt":
+		content, err := s.Caddy.AdaptJSON()
+		data["Content"] = content
+		if err != nil {
+			data["Error"] = err.Error()
+		}
+	case "render":
+		content, err := s.Caddy.Preview()
+		data["Content"] = content
+		if err != nil {
+			data["Error"] = err.Error()
+		}
+	default:
+		data["View"] = "files"
+		data["Content"] = s.Caddy.LivePreview()
 	}
 	s.render(w, r, "caddy_preview", "Caddy 配置预览", data)
 }
