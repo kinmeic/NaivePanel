@@ -10,6 +10,7 @@ import (
 type caddyPageData struct {
 	View     string // "sites" | "config"
 	Active   bool   // caddy.service running
+	Enabled  bool   // caddy.service starts automatically
 	Content  string // config view: live on-disk configuration
 	HostSite string
 }
@@ -18,6 +19,7 @@ func (s *Server) caddyData(view string) caddyPageData {
 	return caddyPageData{
 		View:     view,
 		Active:   sysd.IsActive("caddy"),
+		Enabled:  sysd.IsEnabled("caddy"),
 		HostSite: s.Cfg.GetHostSite(),
 	}
 }
@@ -41,15 +43,25 @@ func (s *Server) handleCaddyConfig(w http.ResponseWriter, r *http.Request) {
 // handleCaddyService starts/stops/restarts caddy.service.
 func (s *Server) handleCaddyService(w http.ResponseWriter, r *http.Request) {
 	action := r.FormValue("action")
-	if action != "start" && action != "stop" && action != "restart" {
+	if action != "start" && action != "stop" && action != "restart" &&
+		action != "enable" && action != "disable" {
 		s.setFlash(w, "未知操作")
 		s.redirect(w, r, "/caddy/sites")
 		return
 	}
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	if err := sysd.Action(action, "caddy"); err != nil {
 		s.setFlash(w, "执行失败: "+err.Error())
 	} else {
-		s.setFlash(w, "Caddy 服务已执行 "+action)
+		switch action {
+		case "enable":
+			s.setFlash(w, "Caddy 已开启开机自启")
+		case "disable":
+			s.setFlash(w, "Caddy 已关闭开机自启（当前服务不会停止）")
+		default:
+			s.setFlash(w, "Caddy 服务已执行 "+action)
+		}
 	}
 	s.redirect(w, r, "/caddy/sites")
 }

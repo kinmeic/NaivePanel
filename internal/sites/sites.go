@@ -52,12 +52,14 @@ type ExtraBlock struct {
 
 // Site is one managed domain.
 type Site struct {
-	Domain       string       `yaml:"domain"`
-	ForwardProxy ForwardProxy `yaml:"forward_proxy"`
-	Web          Web          `yaml:"web"`
-	ExtraBlocks  []ExtraBlock `yaml:"extra_blocks"`
-	RawMode      bool         `yaml:"raw_mode"`
-	Raw          string       `yaml:"raw"`
+	Domain          string       `yaml:"domain"`
+	ForwardProxy    ForwardProxy `yaml:"forward_proxy"`
+	Web             Web          `yaml:"web"`
+	ExtraBlocks     []ExtraBlock `yaml:"extra_blocks"`
+	SiteOptions     string       `yaml:"site_options,omitempty"`
+	ExtraDirectives string       `yaml:"extra_directives,omitempty"`
+	RawMode         bool         `yaml:"raw_mode"`
+	Raw             string       `yaml:"raw"`
 }
 
 // ProxyTokenHeader is the shared-secret header Caddy injects when reverse
@@ -170,7 +172,7 @@ func (s *Site) Validate() error {
 		if eb.Type != BlockHandle && eb.Type != BlockHandlePath {
 			return fmt.Errorf("自定义块 #%d 类型必须是 handle 或 handle_path", i+1)
 		}
-		if eb.Matcher == "" {
+		if eb.Matcher == "" && eb.Type == BlockHandlePath {
 			return fmt.Errorf("自定义块 #%d 的匹配路径不能为空", i+1)
 		}
 		if err := singleLine(fmt.Sprintf("自定义块 #%d 的匹配路径", i+1), eb.Matcher); err != nil {
@@ -204,16 +206,30 @@ func Render(s *Site, panel PanelInfo, hostSite bool, socksPort int) (string, err
 	}
 
 	var b strings.Builder
-	b.WriteString(":443, " + token(s.Domain) + " {\n\troute {\n")
+	b.WriteString(":443, " + token(s.Domain) + " {\n")
+	if strings.TrimSpace(s.SiteOptions) != "" {
+		indent(&b, 1, strings.TrimSpace(s.SiteOptions))
+		b.WriteString("\n")
+	}
+	b.WriteString("\troute {\n")
 
 	if hostSite {
 		renderPanelBlock(&b, panel, 2)
 	}
 
 	for _, eb := range s.ExtraBlocks {
-		indent(&b, 2, eb.Type+" "+token(eb.Matcher)+" {")
+		open := eb.Type + " {"
+		if eb.Matcher != "" {
+			open = eb.Type + " " + token(eb.Matcher) + " {"
+		}
+		indent(&b, 2, open)
 		indent(&b, 3, strings.TrimSpace(eb.Content))
 		indent(&b, 2, "}")
+		b.WriteString("\n")
+	}
+
+	if strings.TrimSpace(s.ExtraDirectives) != "" {
+		indent(&b, 2, strings.TrimSpace(s.ExtraDirectives))
 		b.WriteString("\n")
 	}
 

@@ -192,6 +192,8 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 // handleHostSite migrates panel hosting to another site.
 func (s *Server) handleHostSite(w http.ResponseWriter, r *http.Request) {
 	target := r.FormValue("host_site")
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	if s.Cfg.FindSite(target) < 0 {
 		s.setFlash(w, "目标站点不存在")
 		s.redirect(w, r, "/settings")

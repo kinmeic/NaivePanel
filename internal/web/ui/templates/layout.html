@@ -24,7 +24,7 @@
   </form>
 </aside>
 <main>
-{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{if .Flash}}<div class="{{if flashError .Flash}}error{{else}}flash{{end}}" role="status">{{.Flash}}</div>{{end}}
 {{template "content" .}}
 </main>
 </div>

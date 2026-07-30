@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
@@ -35,6 +36,10 @@ type Server struct {
 
 	pages map[string]*template.Template
 	mux   *http.ServeMux
+
+	// caddyMu keeps model mutations and the corresponding validate/apply/
+	// rollback pipeline as one transaction across concurrent admin requests.
+	caddyMu sync.Mutex
 }
 
 // pageData is the common template payload.
@@ -80,6 +85,14 @@ func (s *Server) parseTemplates() error {
 				return "-"
 			}
 			return t.Format("2006-01-02 15:04:05")
+		},
+		"flashError": func(msg string) bool {
+			for _, marker := range []string{"失败", "错误", "异常", "未知", "不存在", "不可", "中止"} {
+				if strings.Contains(msg, marker) {
+					return true
+				}
+			}
+			return false
 		},
 	}
 	entries, err := fs.ReadDir(uiFS, "ui/templates")
@@ -145,6 +158,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET "+bp+"/bypasscore", s.protect(s.handleBypass))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/install", s.protect(s.handleBypassInstall))
+	s.mux.HandleFunc("POST "+bp+"/bypasscore/control/enable", s.protect(s.handleBypassControlEnable))
 	s.mux.HandleFunc("GET "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigGET))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
@@ -166,7 +180,25 @@ func (s *Server) routes() {
 
 // Handler returns the root handler with the HTTPS gate and security headers.
 func (s *Server) Handler() http.Handler {
-	return s.proxyGate(s.securityHeaders(s.mux))
+	return s.proxyGate(s.securityHeaders(s.limitRequestBody(s.mux)))
+}
+
+const maxRequestBody = 2 << 20
+
+// limitRequestBody bounds every state-changing request before form parsing.
+// This protects the root-running panel from accidental or hostile memory and
+// disk pressure while leaving ample room for BypassCore/Caddy configuration.
+func (s *Server) limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if r.ContentLength > maxRequestBody {
+				http.Error(w, "请求内容过大（上限 2 MiB）", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // proxyGate only serves requests that arrive through Caddy's HTTPS reverse
@@ -188,8 +220,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
+			"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "+
+				"style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -225,7 +260,8 @@ func (s *Server) session(r *http.Request) *auth.Session {
 }
 
 // render executes a page template.
-func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {	t := s.pages[page]
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {
+	t := s.pages[page]
 	if t == nil {
 		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
 		return

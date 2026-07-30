@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ============ 可调参数 ============
-GO_VERSION="1.23.4"
+GO_VERSION="1.26.5"
 # 钉住的 Caddy 版本。已实测 v2.10.2 + klzgrad/forwardproxy@naive 编译通过
 # 且包含 http.handlers.forward_proxy；升级前先本地试编译再改。
 CADDY_PIN="v2.10.2"
@@ -91,13 +91,24 @@ install_go() {
   local tarball="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
   curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}" \
     || curl -fsSL "https://dl.google.com/go/${tarball}" -o "/tmp/${tarball}"
+  curl -fsSL "https://go.dev/dl/${tarball}.sha256" -o "/tmp/${tarball}.sha256" \
+    || curl -fsSL "https://dl.google.com/go/${tarball}.sha256" -o "/tmp/${tarball}.sha256"
+  local go_sha
+  go_sha="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
+  [[ "$go_sha" =~ ^[0-9a-fA-F]{64}$ ]] || die "Go 下载校验文件格式异常"
+  echo "${go_sha}  /tmp/${tarball}" | sha256sum -c - >/dev/null \
+    || die "Go 下载包 SHA256 校验失败"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/${tarball}"
-  rm -f "/tmp/${tarball}"
+  rm -f "/tmp/${tarball}" "/tmp/${tarball}.sha256"
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 }
-if command -v go >/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+CURRENT_GO=""
+if command -v go >/dev/null; then
+  CURRENT_GO="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
+fi
+if [[ -n "$CURRENT_GO" && "$(printf '%s\n' "$GO_VERSION" "$CURRENT_GO" | sort -V | head -n1)" == "$GO_VERSION" ]]; then
   ok "Go 已安装: $(go version | awk '{print $3}')"
 else
   install_go

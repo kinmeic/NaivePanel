@@ -27,7 +27,13 @@
   // server-rendered fragment arrives.
   document.querySelectorAll("[data-list-src]").forEach(function (el) {
     fetch(el.getAttribute("data-list-src"), { credentials: "same-origin" })
-      .then(function (r) { return r.text(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        if (r.redirected && /\/login(?:\?|$)/.test(r.url)) {
+          throw new Error("登录已过期，请刷新页面后重新登录");
+        }
+        return r.text();
+      })
       .then(function (html) {
         el.innerHTML = html;
         bindConfirm(el);
@@ -40,10 +46,25 @@
   // Raw mode toggle.
   var rawToggle = document.querySelector('input[name="raw_mode"]');
   if (rawToggle) {
-    rawToggle.addEventListener("change", function () {
+    function syncRawMode() {
       document.getElementById("raw-section").classList.toggle("hidden", !rawToggle.checked);
       document.getElementById("structured-section").classList.toggle("hidden", rawToggle.checked);
-    });
+    }
+    rawToggle.addEventListener("change", syncRawMode);
+    syncRawMode();
+  }
+
+  // Show only fields relevant to the selected web type.
+  var webType = document.querySelector('select[name="web_type"]');
+  if (webType) {
+    function syncWebFields() {
+      var type = webType.value;
+      document.getElementById("web-root-field").classList.toggle("hidden", type !== "static" && type !== "php");
+      document.getElementById("web-php-field").classList.toggle("hidden", type !== "php");
+      document.getElementById("web-proxy-field").classList.toggle("hidden", type !== "reverse_proxy");
+    }
+    webType.addEventListener("change", syncWebFields);
+    syncWebFields();
   }
 
   // Extra block add/remove.
@@ -82,8 +103,34 @@
         credentials: "same-origin"
       }).then(function (r) {
         return r.text().then(function (t) { return { ok: r.ok, text: t }; });
-      }).then(function (res) { out.textContent = res.text; })
+      }).then(function (res) {
+        out.textContent = res.text;
+        out.classList.toggle("preview-error", !res.ok);
+      })
         .catch(function (e) { out.textContent = "预览失败: " + e; });
     });
   }
+
+  // Prevent duplicate service/config operations while a form is submitting.
+  document.addEventListener("submit", function (e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    setTimeout(function () {
+      form.querySelectorAll('button[type="submit"], button:not([type])').forEach(function (btn) {
+        btn.disabled = true;
+      });
+    }, 0);
+  });
+
+  document.querySelectorAll("[data-copy-target]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var target = document.getElementById(btn.getAttribute("data-copy-target"));
+      if (!target || !navigator.clipboard) return;
+      navigator.clipboard.writeText(target.textContent).then(function () {
+        var old = btn.textContent;
+        btn.textContent = "已复制";
+        setTimeout(function () { btn.textContent = old; }, 1200);
+      });
+    });
+  });
 })();

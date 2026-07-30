@@ -24,33 +24,63 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 	}
 	st := &Site{Domain: domain}
 
-	// Everything the panel renders lives inside route { }.
+	// Panel-rendered sites use route { }, but ordinary hand-written
+	// Caddyfiles commonly put handlers directly in the site block. Accept
+	// both forms so importing a normal Caddyfile remains structured.
 	line, ok := p.next()
-	if !ok || line != "route {" {
-		return nil, fmt.Errorf("缺少 route 块，不是面板渲染格式")
+	if !ok {
+		return nil, fmt.Errorf("站点块为空或未闭合")
+	}
+	wrappedRoute := line == "route {"
+	// Site-level options such as tls/log commonly precede a route block.
+	// Consume those first, then parse the later route structurally instead
+	// of treating the whole route as one opaque custom directive.
+	for !wrappedRoute && line != "}" {
+		tokens, err := splitTokens(line)
+		if err != nil || len(tokens) == 0 || !isSiteOption(tokens[0]) {
+			break
+		}
+		directive, err := p.collectDirective(line)
+		if err != nil {
+			return nil, err
+		}
+		st.SiteOptions = appendDirective(st.SiteOptions, directive)
+		line, ok = p.next()
+		if !ok {
+			return nil, fmt.Errorf("意外的文件结尾（站点块未闭合）")
+		}
+		wrappedRoute = line == "route {"
 	}
 
 	var root, phpSock, proxyTo string
+	fileServer := false
 	for {
-		line, ok = p.next()
+		if wrappedRoute || line == "" {
+			line, ok = p.next()
+		}
 		if !ok {
-			return nil, fmt.Errorf("意外的文件结尾（route 块未闭合）")
+			return nil, fmt.Errorf("意外的文件结尾（站点块未闭合）")
 		}
 		if line == "}" {
-			break // end of route
+			break
 		}
 		tokens, err := splitTokens(line)
 		if err != nil || len(tokens) == 0 {
 			return nil, fmt.Errorf("无法解析行: %q", line)
 		}
+		consumed := true
 		switch tokens[0] {
 		case "handle", "handle_path":
-			if len(tokens) < 3 || tokens[len(tokens)-1] != "{" {
+			if len(tokens) < 2 || tokens[len(tokens)-1] != "{" {
 				return nil, fmt.Errorf("无法解析块: %q", line)
 			}
-			matcher := tokens[1]
+			matcher := ""
+			if len(tokens) >= 3 {
+				matcher = tokens[1]
+			}
 			if tokens[0] == "handle" && matcher == basePath+"/*" {
 				p.skipBlock() // the panel block, not part of the site model
+				line = ""
 				continue
 			}
 			content, err := p.collectBlock()
@@ -63,35 +93,72 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 				Content: content,
 			})
 		case "redir":
-			// panel trailing-slash redirect, skip
+			// Only discard the panel's own trailing-slash redirect. Other
+			// redirects are user configuration and must survive import.
+			if len(tokens) < 3 || tokens[1] != basePath || tokens[2] != basePath+"/" {
+				consumed = false
+			}
 		case "forward_proxy":
+			if tokens[len(tokens)-1] != "{" {
+				return nil, fmt.Errorf("forward_proxy 必须使用块语法")
+			}
 			if err := p.parseForwardProxy(st, socksPort); err != nil {
 				return nil, err
 			}
 		case "root":
-			root = tokens[len(tokens)-1]
+			if tokens[len(tokens)-1] == "{" || len(tokens) < 2 {
+				consumed = false
+			} else {
+				root = tokens[len(tokens)-1]
+			}
 		case "encode":
-			// fixed directive, skip
+			// The panel renders gzip+zstd. Preserve non-standard encoder
+			// settings instead of silently replacing them.
+			if !sameTokenSet(tokens[1:], []string{"gzip", "zstd"}) {
+				consumed = false
+			}
 		case "php_fastcgi":
-			if len(tokens) < 2 {
+			if len(tokens) != 2 {
 				return nil, fmt.Errorf("php_fastcgi 缺少参数")
 			}
 			phpSock = tokens[1]
 		case "file_server":
-			// static site marker, nothing to record
-		case "reverse_proxy":
-			if len(tokens) < 2 {
-				return nil, fmt.Errorf("reverse_proxy 缺少参数")
+			if len(tokens) == 1 {
+				fileServer = true
+			} else {
+				consumed = false
 			}
-			proxyTo = tokens[1]
+		case "reverse_proxy":
+			if len(tokens) == 2 {
+				proxyTo = tokens[1]
+			} else {
+				// Multiple upstreams, matchers and transport blocks cannot
+				// be represented by the simple Web model. Keep them in the
+				// structured form's additional-directives section.
+				consumed = false
+			}
 		default:
-			return nil, fmt.Errorf("无法识别的指令 %q", line)
+			consumed = false
 		}
+		if !consumed {
+			directive, err := p.collectDirective(line)
+			if err != nil {
+				return nil, err
+			}
+			if !wrappedRoute && isSiteOption(tokens[0]) {
+				st.SiteOptions = appendDirective(st.SiteOptions, directive)
+			} else {
+				st.ExtraDirectives = appendDirective(st.ExtraDirectives, directive)
+			}
+		}
+		line = ""
 	}
 
-	line, ok = p.next()
-	if !ok || line != "}" {
-		return nil, fmt.Errorf("站点块未正确闭合")
+	if wrappedRoute {
+		line, ok = p.next()
+		if !ok || line != "}" {
+			return nil, fmt.Errorf("站点块未正确闭合")
+		}
 	}
 	if line, ok = p.next(); ok {
 		return nil, fmt.Errorf("站点块后有多余内容: %q", line)
@@ -100,7 +167,7 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 	switch {
 	case phpSock != "":
 		st.Web = Web{Type: WebPHP, Root: root, PHPSocket: phpSock}
-	case root != "":
+	case root != "" || fileServer:
 		st.Web = Web{Type: WebStatic, Root: root}
 	case proxyTo != "":
 		st.Web = Web{Type: WebReverseProxy, ProxyTo: proxyTo}
@@ -111,6 +178,39 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+func sameTokenSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]bool, len(got))
+	for _, v := range got {
+		seen[v] = true
+	}
+	for _, v := range want {
+		if !seen[v] {
+			return false
+		}
+	}
+	return true
+}
+
+func isSiteOption(name string) bool {
+	switch name {
+	case "tls", "log", "bind", "handle_errors":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendDirective(current, directive string) string {
+	directive = strings.TrimSpace(directive)
+	if current == "" {
+		return directive
+	}
+	return strings.TrimSpace(current) + "\n\n" + directive
 }
 
 // DomainFromHeader extracts the site address (domain) from a snippet's first
@@ -201,6 +301,23 @@ func (p *snippetParser) collectBlock() (string, error) {
 		content = append(content, line)
 	}
 	return "", fmt.Errorf("块未闭合")
+}
+
+// collectDirective returns line plus its block body when line opens a block.
+// Simple directives are returned unchanged.
+func (p *snippetParser) collectDirective(line string) (string, error) {
+	tokens, err := splitTokens(line)
+	if err != nil || len(tokens) == 0 || tokens[len(tokens)-1] != "{" {
+		return line, err
+	}
+	content, err := p.collectBlock()
+	if err != nil {
+		return "", err
+	}
+	if content == "" {
+		return line + "\n}", nil
+	}
+	return line + "\n" + content + "\n}", nil
 }
 
 // dedentLines strips the common leading-tab indentation.

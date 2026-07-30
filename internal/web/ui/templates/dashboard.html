@@ -16,7 +16,7 @@
     <p>bypasscore：
       {{if .Data.BypassInstall}}
         {{if .Data.BypassActive}}<span class="ok">运行中</span>{{else}}<span class="warn">已安装未运行</span>{{end}}
-        <span class="muted">{{.Data.BypassVersion}}</span>
+        {{if .Data.BypassVersion}}<span class="service-version mono">{{.Data.BypassVersion}}</span>{{end}}
       {{else}}<span class="muted">未安装</span>{{end}}
     </p>
   </div>

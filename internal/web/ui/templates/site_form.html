@@ -57,16 +57,16 @@
         <option value="reverse_proxy" {{if eq $s.Web.Type "reverse_proxy"}}selected{{end}}>反向代理</option>
       </select>
     </label>
-    <label>站点目录（静态/PHP）
+    <label id="web-root-field">站点目录（静态/PHP）
       <input name="web_root" value="{{$s.Web.Root}}" placeholder="/var/www/example.com">
     </label>
-    <label>php-fpm socket（PHP 站）
+    <label id="web-php-field">php-fpm socket（PHP 站）
       <input name="web_php_socket" list="php-sockets" value="{{$s.Web.PHPSocket}}" placeholder="unix//run/php/php8.3-fpm.sock">
       <datalist id="php-sockets">
         {{range $d.PHPSockets}}<option value="{{.}}">{{end}}
       </datalist>
     </label>
-    <label>反代上游（反向代理站）
+    <label id="web-proxy-field">反代上游（反向代理站）
       <input name="web_proxy_to" value="{{$s.Web.ProxyTo}}" placeholder="127.0.0.1:3000">
     </label>
   </fieldset>
@@ -88,16 +88,29 @@
     </div>
     <button type="button" id="eb-add" class="btn">{{icon "plus"}}添加自定义块</button>
   </fieldset>
+
+  <fieldset>
+    <legend>保留的自定义指令</legend>
+    <p class="muted">从现有 Caddyfile 识别出的高级配置会保留在这里；站点级选项位于 route 外，HTTP 处理指令位于 route 内。</p>
+    <label>站点级选项（如 tls / log / bind）
+      <textarea name="site_options" rows="5" class="mono" placeholder="tls admin@example.com">{{$s.SiteOptions}}</textarea>
+    </label>
+    <label>附加 HTTP 指令
+      <textarea name="extra_directives" rows="7" class="mono" placeholder="header X-Content-Type-Options nosniff">{{$s.ExtraDirectives}}</textarea>
+    </label>
+  </fieldset>
   </div>
 
   <div class="actions">
     <button type="submit" class="primary">{{icon "save"}}保存并生效</button>
     <button type="button" id="btn-preview" class="btn">{{icon "refresh-cw"}}刷新预览</button>
+    <a class="btn" href="{{$base}}/caddy/sites">{{icon "arrow-left"}}取消</a>
   </div>
 </form>
 
 <fieldset>
   <legend>配置预览（该站点生成的 Caddyfile 片段）</legend>
+  <button type="button" class="btn copy-btn" data-copy-target="preview">复制配置</button>
   <pre id="preview" class="preview">{{$d.Preview}}</pre>
 </fieldset>
 {{end}}

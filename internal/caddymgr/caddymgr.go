@@ -3,6 +3,7 @@ package caddymgr
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"maps"
@@ -36,6 +37,8 @@ type Manager struct {
 	mu      sync.Mutex
 	managed map[string]bool
 	drop    map[string]bool
+
+	applyMu sync.Mutex
 }
 
 // New creates a Manager bound to the panel config.
@@ -54,6 +57,14 @@ func New(cfg *config.Config) *Manager {
 func (m *Manager) DropDomain(domain string) {
 	m.mu.Lock()
 	m.drop[domain] = true
+	m.mu.Unlock()
+}
+
+// CancelDropDomain clears a pending deletion when the surrounding model
+// transaction fails before Apply consumes it.
+func (m *Manager) CancelDropDomain(domain string) {
+	m.mu.Lock()
+	delete(m.drop, domain)
 	m.mu.Unlock()
 }
 
@@ -153,7 +164,7 @@ func (m *Manager) validate(staging string) error {
 // <Caddyfile dir>/backup/ (e.g. /etc/caddy/backup/), keeping the newest
 // keepBackups snapshots.
 func (m *Manager) backup() (string, error) {
-	stamp := time.Now().Format("20060102-150405")
+	stamp := time.Now().Format("20060102-150405.000000000")
 	root := filepath.Join(filepath.Dir(m.cfg.Caddy.MainFile), "backup")
 	dst := filepath.Join(root, stamp)
 	if err := os.MkdirAll(dst, 0700); err != nil {
@@ -302,9 +313,16 @@ func (m *Manager) reload() error {
 func (m *Manager) healthCheck() error {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	tr := &http.Transport{
-		DialContext:     dialer.DialContext,
-		TLSClientConfig: &tls.Config{ServerName: m.cfg.Domain},
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			conn, err := dialer.DialContext(ctx, network, "127.0.0.1:443")
+			if err == nil {
+				return conn, nil
+			}
+			return dialer.DialContext(ctx, network, "[::1]:443")
+		},
+		TLSClientConfig: &tls.Config{ServerName: m.cfg.Domain, MinVersion: tls.VersionTLS12},
 	}
+	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr, Timeout: 8 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, "https://"+m.cfg.Domain+"/", nil)
 	if err != nil {
@@ -324,6 +342,9 @@ func (m *Manager) healthCheck() error {
 // Apply runs the full pipeline: render → stage → validate → backup →
 // apply → reload → health check, rolling back on failure.
 func (m *Manager) Apply() error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+
 	files, err := m.RenderAll()
 	if err != nil {
 		return err
@@ -341,26 +362,36 @@ func (m *Manager) Apply() error {
 		return fmt.Errorf("备份当前配置失败: %w", err)
 	}
 	if err := m.applyLive(files); err != nil {
-		return fmt.Errorf("写入配置失败: %w", err)
+		if rollbackErr := m.rollback(backupDir); rollbackErr != nil {
+			return fmt.Errorf("写入配置失败: %v；回滚也失败: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("写入配置失败，已回滚: %w", err)
 	}
 	if err := m.reload(); err != nil {
-		m.rollback(backupDir)
-		return err
+		if rollbackErr := m.rollback(backupDir); rollbackErr != nil {
+			return fmt.Errorf("%v；回滚也失败: %v", err, rollbackErr)
+		}
+		return fmt.Errorf("%w（已回滚）", err)
 	}
 	if err := m.healthCheck(); err != nil {
-		m.rollback(backupDir)
+		if rollbackErr := m.rollback(backupDir); rollbackErr != nil {
+			return fmt.Errorf("探活失败: %v；回滚也失败: %v", err, rollbackErr)
+		}
 		return fmt.Errorf("配置已回滚: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) rollback(backupDir string) {
-	if err := m.restore(backupDir); err == nil {
-		_ = m.reload()
+func (m *Manager) rollback(backupDir string) error {
+	if err := m.restore(backupDir); err != nil {
+		return err
 	}
+	return m.reload()
 }
 
 // ReloadOnly re-renders nothing and just reloads the live config.
 func (m *Manager) ReloadOnly() error {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
 	return m.reload()
 }

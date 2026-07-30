@@ -26,6 +26,11 @@ func IsActive(unit string) bool {
 	return exec.Command("systemctl", "is-active", "--quiet", unit).Run() == nil
 }
 
+// IsEnabled reports whether the unit is configured to start automatically.
+func IsEnabled(unit string) bool {
+	return exec.Command("systemctl", "is-enabled", "--quiet", unit).Run() == nil
+}
+
 // Status returns systemctl status text (may be non-zero exit for dead units).
 func Status(unit string) string {
 	out, _ := exec.Command("systemctl", "status", "--no-pager", "-l", unit).CombinedOutput()

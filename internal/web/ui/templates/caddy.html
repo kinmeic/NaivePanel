@@ -4,11 +4,20 @@
   <div class="card">
     <h3>{{icon "power"}}服务控制</h3>
     <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+    <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
     <form method="post" action="{{.Base}}/caddy/service" class="inline">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
       <button name="action" value="start" class="btn">{{icon "play"}}启动</button>
       <button name="action" value="stop" class="btn" data-confirm="停止 Caddy 后面板将随站点一起不可访问，需要到服务器上手动启动，确定停止？">{{icon "square"}}停止</button>
       <button name="action" value="restart" class="btn" data-confirm="重启期间面板与站点会短暂断连，确定重启 Caddy？">{{icon "rotate-cw"}}重启</button>
+    </form>
+    <form method="post" action="{{.Base}}/caddy/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      {{if .Data.Enabled}}
+      <button name="action" value="disable" class="btn" data-confirm="关闭后 Caddy 将不会随系统启动；当前服务不会停止。确定关闭？">{{icon "x"}}关闭自启</button>
+      {{else}}
+      <button name="action" value="enable" class="btn">{{icon "check"}}开启自启</button>
+      {{end}}
     </form>
     <form method="post" action="{{.Base}}/caddy/reload" class="inline">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -32,7 +41,8 @@
   <div class="loading"><span class="spinner"></span>正在解析 Caddyfile…</div>
 </div>
 {{else}}
-<p class="muted">当前磁盘上的真实 Caddyfile 与站点片段原文。</p>
-<pre class="preview">{{.Data.Content}}</pre>
+<p class="muted">当前磁盘上的主 Caddyfile 原文（不包含 sites 目录下的片段内容）。</p>
+<button type="button" class="btn copy-btn" data-copy-target="live-caddy-config">复制全部配置</button>
+<pre id="live-caddy-config" class="preview">{{.Data.Content}}</pre>
 {{end}}
 {{end}}

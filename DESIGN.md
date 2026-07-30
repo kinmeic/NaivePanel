@@ -214,6 +214,8 @@ import /etc/caddy/sites/*.caddy
   - 站点开启 `use_bypasscore` 时，面板确保 BypassCore config 中存在 `{"tag":"caddy-forward","type":"socks","listen":"127.0.0.1","port":<socks_port>,"network":"tcp"}` 入站，缺失则自动追加（validate → reload）
   - 状态面板：版本、运行状态、readiness、入站/出站概览（`GET /v1/status`）
 - **全量编辑**：config.json 文本编辑器（页内），保存走完整管线：`-check-config` → 备份 → 落盘 → `POST /v1/config/reload`（返回 `restart_required` 时改为 systemctl restart）→ `GET /v1/ready` 探活
+- **控制面自修复**：新建最小配置时自动写入 `control.enabled=true` 与面板配置的 socket；
+  对存量配置区分“服务未运行 / 控制面未启用 / socket 路径不一致 / socket 暂不可达”，并提供一键启用
 - 服务控制：start / stop / restart（systemctl）
 
 ### 8.3 控制面客户端

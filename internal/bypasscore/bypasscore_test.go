@@ -74,6 +74,35 @@ func TestEnsureSocksInboundAppends(t *testing.T) {
 	}
 }
 
+func TestEnsureControlPlane(t *testing.T) {
+	in := []byte(`{"inbounds":[],"control":{"enabled":false},"custom":{"keep":true}}`)
+	out, changed, err := EnsureControlPlane(in, "/run/bypasscore/control.sock")
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	state, err := InspectControlConfig(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Configured || !state.Enabled || state.Socket != "/run/bypasscore/control.sock" {
+		t.Fatalf("unexpected state: %+v", state)
+	}
+	if !strings.Contains(string(out), `"keep": true`) {
+		t.Fatalf("unrelated config lost: %s", out)
+	}
+	out2, changed, err := EnsureControlPlane(out, "/run/bypasscore/control.sock")
+	if err != nil || changed || string(out2) != string(out) {
+		t.Fatalf("must be idempotent: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestInspectControlConfigMissing(t *testing.T) {
+	state, err := InspectControlConfig([]byte(`{"inbounds":[]}`))
+	if err != nil || state.Configured || state.Enabled {
+		t.Fatalf("unexpected state=%+v err=%v", state, err)
+	}
+}
+
 func TestSHA256ForAsset(t *testing.T) {
 	sum := strings.Repeat("ab", 32)
 	sums := []byte(sum + "  ./bypasscore-linux-x86_64.tar.gz\n" +

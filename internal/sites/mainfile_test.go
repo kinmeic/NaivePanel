@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -34,6 +35,44 @@ const sampleMain = `# 主配置
 	}
 }
 `
+
+// TestExternalCaddyfile is an opt-in real-world regression check. It keeps
+// personal/server config out of the repository while allowing:
+// NAIVEPANEL_CADDYFILE=/path/to/Caddyfile go test ./internal/sites -run External -v
+func TestExternalCaddyfile(t *testing.T) {
+	path := os.Getenv("NAIVEPANEL_CADDYFILE")
+	if path == "" {
+		t.Skip("NAIVEPANEL_CADDYFILE is not set")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, list := SplitMain(string(content))
+	if len(list) == 0 {
+		t.Fatal("no inline site blocks found")
+	}
+	basePath := os.Getenv("NAIVEPANEL_BASE_PATH")
+	for _, site := range list {
+		got, err := Parse(site.Content, basePath, 1080)
+		if err != nil {
+			t.Errorf("%s: %v", site.Domain, err)
+			continue
+		}
+		rendered, err := Render(got, PanelInfo{BasePath: basePath, Listen: "127.0.0.1:9000"}, false, 1080)
+		if err != nil {
+			t.Errorf("%s render: %v", site.Domain, err)
+			continue
+		}
+		if _, err := Parse(rendered, basePath, 1080); err != nil {
+			t.Errorf("%s rendered round-trip: %v", site.Domain, err)
+			continue
+		}
+		t.Logf("%s: web=%s forward_proxy=%v site_options=%v extra_directives=%v",
+			got.Domain, got.Web.Type, got.ForwardProxy.Enabled,
+			got.SiteOptions != "", got.ExtraDirectives != "")
+	}
+}
 
 func TestSplitMain(t *testing.T) {
 	head, list := SplitMain(sampleMain)

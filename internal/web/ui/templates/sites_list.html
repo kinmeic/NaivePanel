@@ -8,7 +8,7 @@
     <td>{{if .Site.RawMode}}高级模式{{else}}{{.Site.Web.Type}}{{end}}</td>
     <td>{{if .Site.ForwardProxy.Enabled}}启用（{{len .Site.ForwardProxy.Accounts}} 个账号）{{else}}关闭{{end}}</td>
     <td class="mono">{{if .Site.ForwardProxy.Enabled}}{{if .Site.ForwardProxy.UseBypassCore}}BypassCore{{else}}{{if .Site.ForwardProxy.Upstream}}{{.Site.ForwardProxy.Upstream}}{{else}}直连{{end}}{{end}}{{else}}-{{end}}</td>
-    <td>{{if .Site.ExtraBlocks}}{{len .Site.ExtraBlocks}} 个自定义块{{end}}{{if .ParseNote}}<br><span class="muted" title="{{.ParseNote}}">未完全匹配：{{.ParseNote}}</span>{{end}}</td>
+    <td>{{if .Site.ExtraBlocks}}{{len .Site.ExtraBlocks}} 个自定义块{{end}}{{if .Site.SiteOptions}}<span class="tag muted">站点选项</span>{{end}}{{if .Site.ExtraDirectives}}<span class="tag muted">附加指令</span>{{end}}{{if .ParseNote}}<br><span class="muted" title="{{.ParseNote}}">未完全匹配：{{.ParseNote}}</span>{{end}}</td>
     <td>
       <a class="btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit">{{icon "pencil"}}编辑</a>
       <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Site.Domain}}？">

@@ -75,7 +75,7 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 	log.Printf("NaivePanel %s 监听 %s，面板路径 %s（经 Caddy 反代 https://%s%s/）",
-		version, cfg.Listen, cfg.BasePath, cfg.HostSite, cfg.BasePath)
+		version, cfg.Listen, cfg.BasePath, cfg.GetHostSite(), cfg.BasePath)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("HTTP 服务退出: %v", err)
 	}

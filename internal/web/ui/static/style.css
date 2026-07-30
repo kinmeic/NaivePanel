@@ -91,8 +91,16 @@ form.inline { display: inline; }
 
 .flash { background: #173a2a; border: 1px solid var(--ok); color: var(--ok); padding: 10px 14px; border-radius: 8px; margin: 12px 0; }
 .error { background: #3a1d1d; border: 1px solid var(--bad); color: #f0a0a0; padding: 10px 14px; border-radius: 8px; margin: 12px 0; white-space: pre-wrap; }
+.warning { background: #3a3018; border: 1px solid var(--warn); color: #f1ca73; padding: 12px 14px; border-radius: 8px; margin: 12px 0; }
+.notice { background: var(--panel); border: 1px solid var(--border); color: var(--muted); padding: 12px 14px; border-radius: 8px; margin: 12px 0; }
+.warning details { margin-top: 10px; }
+.warning code { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.service-version {
+  display: block; min-width: 0; margin-top: 3px; color: var(--muted);
+  font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word;
+}
 .tag { background: var(--accent); color: #fff; font-size: 12px; border-radius: 4px; padding: 1px 6px; }
 .tag.warn { background: var(--warn); color: #0a0e18; }
 .tag.bad { background: var(--bad); color: #fff; }
@@ -105,6 +113,8 @@ form.inline { display: inline; }
   padding: 14px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px; line-height: 1.5; white-space: pre;
 }
+.copy-btn { margin-bottom: 8px; }
+button:disabled { opacity: .65; cursor: wait; }
 
 .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .logbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
@@ -132,3 +142,11 @@ body.auth { display: flex; min-height: 100vh; align-items: center; justify-conte
 
 .recovery-codes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 16px 0; }
 .recovery-codes code { background: var(--panel); padding: 8px; border-radius: 6px; text-align: center; }
+
+@media (max-width: 700px) {
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+  .cards { grid-template-columns: 1fr; }
+  .actions { flex-wrap: wrap; }
+  .eb-row { grid-template-columns: 1fr; }
+  .eb-row textarea, .eb-row .eb-del { grid-column: 1; }
+}

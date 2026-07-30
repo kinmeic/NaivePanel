@@ -202,3 +202,22 @@ func TestForeignSnippetSurvives(t *testing.T) {
 		t.Fatal("foreign snippet must survive untouched")
 	}
 }
+
+func TestLivePreviewOnlyReturnsMainFile(t *testing.T) {
+	const main = "{\n\temail admin@example.com\n}\n\nimport /etc/caddy/sites/*.caddy\n"
+	m, dir := testManager(t, main)
+	if err := os.MkdirAll(filepath.Join(dir, "sites"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sites", "private.example.caddy"),
+		[]byte("private.example {\n\trespond ok\n}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got := m.LivePreview()
+	if got != main {
+		t.Fatalf("preview must be exact main file content:\n%s", got)
+	}
+	if strings.Contains(got, "# =====") || strings.Contains(got, "private.example") {
+		t.Fatalf("preview contains synthetic header or site snippet:\n%s", got)
+	}
+}

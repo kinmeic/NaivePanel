@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/sites"
+	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
 
 // siteForm is the view model for the site edit form.
@@ -51,6 +53,8 @@ func parseSiteForm(r *http.Request) (*sites.Site, error) {
 	st.Web.Root = strings.TrimSpace(r.FormValue("web_root"))
 	st.Web.PHPSocket = strings.TrimSpace(r.FormValue("web_php_socket"))
 	st.Web.ProxyTo = strings.TrimSpace(r.FormValue("web_proxy_to"))
+	st.SiteOptions = strings.TrimSpace(r.FormValue("site_options"))
+	st.ExtraDirectives = strings.TrimSpace(r.FormValue("extra_directives"))
 	types := r.Form["eb_type"]
 	matchers := r.Form["eb_matcher"]
 	contents := r.Form["eb_content"]
@@ -86,16 +90,42 @@ func accountsText(st *sites.Site) string {
 	return b.String()
 }
 
-// applyWithRollback saves the site change and applies it to Caddy, reverting
-// the model when the pipeline fails.
-func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
-	old, _ := s.Cfg.GetSite(st.Domain)
+// applySiteChange saves the site change and applies it to Caddy, reverting
+// the model when the pipeline fails. The caller holds s.caddyMu.
+func (s *Server) applySiteChange(st *sites.Site) error {
+	if st.ForwardProxy.Enabled && st.ForwardProxy.UseBypassCore {
+		if !s.Bypass.Installed() {
+			return fmt.Errorf("该站点选择了 BypassCore 分流，但 BypassCore 尚未安装")
+		}
+		if !sysd.IsActive("bypasscore") {
+			return fmt.Errorf("该站点选择了 BypassCore 分流，但服务尚未运行；请先到 BypassCore 页面启动服务")
+		}
+		cur, err := s.Bypass.ReadConfig()
+		if err != nil {
+			return fmt.Errorf("读取 BypassCore 配置: %w", err)
+		}
+		next, inboundChanged, err := bypasscore.EnsureSocksInbound(cur, s.Cfg.BypassCore.SocksPort)
+		if err != nil {
+			return err
+		}
+		next, controlChanged, err := bypasscore.EnsureControlPlane(next, s.Cfg.BypassCore.ControlSock)
+		if err != nil {
+			return err
+		}
+		if inboundChanged || controlChanged {
+			if err := s.Bypass.ApplyConfig(next); err != nil {
+				return fmt.Errorf("准备 BypassCore 本地入站失败: %w", err)
+			}
+		}
+	}
+
+	old, hadModel := s.Cfg.GetSite(st.Domain)
 	if err := s.Cfg.UpsertSite(*st); err != nil {
 		return err
 	}
 	if err := s.Caddy.Apply(); err != nil {
 		// Revert the model so it matches what Caddy actually runs.
-		if existed {
+		if hadModel {
 			_ = s.Cfg.UpsertSite(old)
 		} else {
 			_ = s.Cfg.RemoveSiteForce(st.Domain)
@@ -149,6 +179,8 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderFormError(w, r, st, true, err)
 		return
 	}
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	if s.Cfg.FindSite(st.Domain) >= 0 {
 		s.renderFormError(w, r, st, true, fmt.Errorf("站点 %s 已存在", st.Domain))
 		return
@@ -157,7 +189,7 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderFormError(w, r, st, true, fmt.Errorf("站点 %s 的磁盘配置已存在", st.Domain))
 		return
 	}
-	if err := s.applySiteChange(st, false); err != nil {
+	if err := s.applySiteChange(st); err != nil {
 		s.renderFormError(w, r, st, true, err)
 		return
 	}
@@ -192,6 +224,8 @@ func (s *Server) handleSiteEdit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	_, onDisk := s.Caddy.ReadDiskSite(domain)
 	if s.Cfg.FindSite(domain) < 0 && !onDisk {
 		s.setFlash(w, "站点不存在")
@@ -207,7 +241,7 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		s.renderFormError(w, r, st, false, fmt.Errorf("域名不可修改；如需更换请新建站点后删除旧站点"))
 		return
 	}
-	if err := s.applySiteChange(st, true); err != nil {
+	if err := s.applySiteChange(st); err != nil {
 		s.renderFormError(w, r, st, false, err)
 		return
 	}
@@ -217,8 +251,11 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	ds, onDisk := s.Caddy.ReadDiskSite(domain)
 	st, ok := s.Cfg.GetSite(domain)
+	wasManaged := ok
 	if !ok {
 		// Disk-only site (never managed by the panel): adopt it into the
 		// model first so deletion goes through the same safe path (staging,
@@ -235,7 +272,11 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		st = *parsed
-		_ = s.Cfg.UpsertSite(st)
+		if err := s.Cfg.UpsertSite(st); err != nil {
+			s.setFlash(w, "导入磁盘站点失败: "+err.Error())
+			s.redirect(w, r, "/caddy/sites")
+			return
+		}
 	}
 	if onDisk {
 		// Make sure the next Apply removes the on-disk copy too: an inline
@@ -244,11 +285,16 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		s.Caddy.DropDomain(domain)
 	}
 	if err := s.Cfg.DeleteSite(domain); err != nil {
+		s.Caddy.CancelDropDomain(domain)
+		if !wasManaged {
+			_ = s.Cfg.RemoveSiteForce(domain)
+		}
 		s.setFlash(w, err.Error())
 		s.redirect(w, r, "/caddy/sites")
 		return
 	}
 	if err := s.Caddy.Apply(); err != nil {
+		s.Caddy.CancelDropDomain(domain)
 		// Caddy 回滚后仍在运行旧配置，把站点加回模型保持一致。
 		_ = s.Cfg.UpsertSite(st)
 		s.setFlash(w, "删除失败，站点已保留: "+err.Error())

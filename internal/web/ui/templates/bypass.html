@@ -4,8 +4,9 @@
   <div class="card">
     <h3>{{icon "package"}}安装状态</h3>
     {{if .Data.Installed}}
-      <p><span class="ok">已安装</span> <span class="mono">{{.Data.Version}}</span></p>
+      <p><span class="ok">已安装</span>{{if .Data.Version}}<span class="service-version mono">{{.Data.Version}}</span>{{end}}</p>
       <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+      <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
     {{else}}
       <p><span class="warn">未安装</span></p>
     {{end}}
@@ -22,6 +23,14 @@
       <button name="action" value="stop" class="btn">{{icon "square"}}停止</button>
       <button name="action" value="restart" class="btn">{{icon "rotate-cw"}}重启</button>
     </form>
+    <form method="post" action="{{.Base}}/bypasscore/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      {{if .Data.Enabled}}
+      <button name="action" value="disable" class="btn" data-confirm="关闭后 BypassCore 将不会随系统启动；当前服务不会停止。确定关闭？">{{icon "x"}}关闭自启</button>
+      {{else}}
+      <button name="action" value="enable" class="btn">{{icon "check"}}开启自启</button>
+      {{end}}
+    </form>
     <p class="muted">本机 SOCKS5 入站端口：<code>{{.Data.SocksPort}}</code>（站点启用 BypassCore 分流时 upstream 指向它）</p>
     <p><a class="btn" href="{{.Base}}/logs?service=bypasscore">{{icon "scroll-text"}}查看日志</a></p>
   </div>
@@ -37,7 +46,20 @@
 <pre class="preview">{{prettyJSON .Data.Status}}</pre>
 {{else if .Data.StatusRaw}}
 <pre class="preview">{{.Data.StatusRaw}}</pre>
+{{else if .Data.StatusInfo}}
+<div class="notice">{{.Data.StatusInfo}}</div>
+{{else if .Data.StatusWarning}}
+<div class="warning">
+  <strong>{{.Data.StatusWarning}}</strong>
+  {{if .Data.StatusDetail}}<details><summary>技术详情</summary><code>{{.Data.StatusDetail}}</code></details>{{end}}
+  {{if .Data.ControlNeedsEnable}}
+  <form method="post" action="{{.Base}}/bypasscore/control/enable" class="inline-block" data-confirm="将在 BypassCore 配置中启用本地 Unix socket 控制面，并重启服务使其生效，继续？">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit" class="primary">{{icon "power"}}启用控制面</button>
+  </form>
+  {{end}}
+</div>
 {{else}}
-<div class="error">控制面不可用：{{.Data.StatusError}}（服务未运行或未启用 control socket 时属正常）</div>
+<div class="error">{{.Data.StatusError}}</div>
 {{end}}
 {{end}}

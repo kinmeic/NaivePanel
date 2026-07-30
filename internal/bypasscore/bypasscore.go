@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/config"
@@ -21,11 +22,25 @@ import (
 
 // Manager handles one BypassCore installation.
 type Manager struct {
-	cfg *config.Config
+	cfg    *config.Config
+	client *http.Client
+	mu     sync.Mutex
 }
 
 // New creates a Manager bound to the panel config.
-func New(cfg *config.Config) *Manager { return &Manager{cfg: cfg} }
+func New(cfg *config.Config) *Manager {
+	sock := cfg.BypassCore.ControlSock
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", sock)
+		},
+	}
+	return &Manager{
+		cfg:    cfg,
+		client: &http.Client{Transport: tr, Timeout: 10 * time.Second},
+	}
+}
 
 // Installed reports whether the binary exists.
 func (m *Manager) Installed() bool {
@@ -42,26 +57,17 @@ func (m *Manager) Version() string {
 	return strings.TrimSpace(string(out))
 }
 
-// controlClient returns an HTTP client talking to the control Unix socket.
-func (m *Manager) controlClient() *http.Client {
-	sock := m.cfg.BypassCore.ControlSock
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sock)
-		},
-	}
-	return &http.Client{Transport: tr, Timeout: 10 * time.Second}
-}
-
 // ControlGet fetches a control-plane endpoint and returns the raw body.
 func (m *Manager) ControlGet(path string) ([]byte, error) {
-	resp, err := m.controlClient().Get("http://control" + path)
+	resp, err := m.client.Get("http://control" + path)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("读取控制面响应失败: %w", err)
+	}
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("控制面 %s 返回 %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
@@ -70,12 +76,15 @@ func (m *Manager) ControlGet(path string) ([]byte, error) {
 
 // controlPost posts a body to a control-plane endpoint.
 func (m *Manager) controlPost(path string, body []byte) ([]byte, error) {
-	resp, err := m.controlClient().Post("http://control"+path, "application/json", bytes.NewReader(body))
+	resp, err := m.client.Post("http://control"+path, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	out, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	out, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if readErr != nil {
+		return nil, fmt.Errorf("读取控制面响应失败: %w", readErr)
+	}
 	if resp.StatusCode == http.StatusConflict || resp.StatusCode >= 400 {
 		return out, fmt.Errorf("控制面 %s 返回 %d: %s", path, resp.StatusCode, strings.TrimSpace(string(out)))
 	}
@@ -108,6 +117,9 @@ func (m *Manager) checkConfig(path string) error {
 // ApplyConfig runs the full config-change pipeline for BypassCore:
 // validate → backup → write → hot reload (restart when required) → probe.
 func (m *Manager) ApplyConfig(content []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !json.Valid(content) {
 		return fmt.Errorf("不是合法的 JSON")
 	}
@@ -125,45 +137,122 @@ func (m *Manager) ApplyConfig(content []byte) error {
 	if err := m.checkConfig(tmp.Name()); err != nil {
 		return err
 	}
-	// Backup current.
+	// Backup current and remember it for transactional rollback.
 	live := m.cfg.BypassCore.ConfigPath
-	stamp := time.Now().Format("20060102-150405")
+	old, oldErr := os.ReadFile(live)
+	oldExists := oldErr == nil
+	if oldErr != nil && !os.IsNotExist(oldErr) {
+		return fmt.Errorf("读取当前配置失败: %w", oldErr)
+	}
+	stamp := time.Now().Format("20060102-150405.000000000")
 	backupDir := filepath.Join(m.cfg.BackupDir, "bypasscore")
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
 		return err
 	}
-	if cur, err := os.ReadFile(live); err == nil {
-		if err := os.WriteFile(filepath.Join(backupDir, "config-"+stamp+".json"), cur, 0600); err != nil {
+	if oldExists {
+		if err := os.WriteFile(filepath.Join(backupDir, "config-"+stamp+".json"), old, 0600); err != nil {
 			return err
 		}
 	}
-	// Write live.
-	if err := os.MkdirAll(filepath.Dir(live), 0755); err != nil {
+	// Write live atomically so a crash cannot leave truncated JSON.
+	if err := writeFileAtomic(live, content, 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(live, content, 0600); err != nil {
-		return err
-	}
-	// Hot reload through the control plane when available.
-	if _, statErr := os.Stat(m.cfg.BypassCore.ControlSock); statErr == nil {
-		if out, err := m.controlPost("/v1/config/reload", content); err != nil {
-			if strings.Contains(string(out), "restart_required") || strings.Contains(err.Error(), "restart_required") {
-				return restartService()
-			}
-			return fmt.Errorf("热重载失败: %w", err)
-		}
-		if strings.Contains(string(mustReady(m)), "restart_required") {
-			return restartService()
-		}
+
+	// Saving configuration must not unexpectedly start a stopped service.
+	if !serviceActive() {
 		return nil
 	}
-	// No control socket: restart the service if it is running.
-	return restartService()
+
+	var applyErr error
+	// Hot reload through the control plane when available.
+	if st, statErr := os.Stat(m.cfg.BypassCore.ControlSock); statErr == nil && st.Mode()&os.ModeSocket != 0 {
+		if out, err := m.controlPost("/v1/config/reload", content); err != nil {
+			if strings.Contains(string(out), "restart_required") || strings.Contains(err.Error(), "restart_required") {
+				applyErr = restartService()
+			} else {
+				applyErr = fmt.Errorf("热重载失败: %w", err)
+			}
+		} else {
+			_, applyErr = m.Ready()
+		}
+	} else {
+		applyErr = restartService()
+	}
+	if applyErr == nil {
+		if state, err := InspectControlConfig(content); err == nil &&
+			state.Enabled && state.Socket == m.cfg.BypassCore.ControlSock {
+			applyErr = m.waitReady(5 * time.Second)
+		}
+	}
+	if applyErr == nil {
+		return nil
+	}
+
+	// Restore both disk and runtime to the previously working revision.
+	var rollbackErr error
+	if oldExists {
+		rollbackErr = writeFileAtomic(live, old, 0600)
+	} else {
+		rollbackErr = os.Remove(live)
+		if os.IsNotExist(rollbackErr) {
+			rollbackErr = nil
+		}
+	}
+	if rollbackErr == nil {
+		rollbackErr = restartService()
+	}
+	if rollbackErr != nil {
+		return fmt.Errorf("应用配置失败: %v；回滚也失败: %v", applyErr, rollbackErr)
+	}
+	return fmt.Errorf("应用配置失败，已回滚到原配置: %w", applyErr)
 }
 
-func mustReady(m *Manager) []byte {
-	b, _ := m.Ready()
-	return b
+func (m *Manager) waitReady(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last error
+	for time.Now().Before(deadline) {
+		if _, err := m.Ready(); err == nil {
+			return nil
+		} else {
+			last = err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("控制面探活超时: %w", last)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
+func serviceActive() bool {
+	return exec.Command("systemctl", "is-active", "--quiet", "bypasscore").Run() == nil
 }
 
 func restartService() error {
@@ -174,6 +263,72 @@ func restartService() error {
 		return fmt.Errorf("重启 bypasscore 失败: %v: %s", err, out.String())
 	}
 	return nil
+}
+
+// ControlConfigState describes whether BypassCore's config will create the
+// control socket. This lets the UI distinguish a disabled control plane from
+// a broken running service without exposing a low-level dial error.
+type ControlConfigState struct {
+	Configured bool
+	Enabled    bool
+	Socket     string
+}
+
+// InspectControlConfig reads the control section without changing content.
+func InspectControlConfig(content []byte) (ControlConfigState, error) {
+	var root map[string]any
+	if err := json.Unmarshal(content, &root); err != nil {
+		return ControlConfigState{}, fmt.Errorf("解析配置: %w", err)
+	}
+	raw, ok := root["control"]
+	if !ok {
+		return ControlConfigState{}, nil
+	}
+	control, ok := raw.(map[string]any)
+	if !ok {
+		return ControlConfigState{}, fmt.Errorf("control 必须是 JSON 对象")
+	}
+	state := ControlConfigState{Configured: true}
+	state.Enabled, _ = control["enabled"].(bool)
+	state.Socket, _ = control["socket"].(string)
+	return state, nil
+}
+
+// EnsureControlPlane enables the local Unix-socket control API expected by
+// NaivePanel while preserving every unrelated BypassCore setting.
+func EnsureControlPlane(content []byte, socket string) ([]byte, bool, error) {
+	var root map[string]any
+	if len(bytes.TrimSpace(content)) == 0 {
+		root = map[string]any{}
+	} else if err := json.Unmarshal(content, &root); err != nil {
+		return nil, false, fmt.Errorf("解析现有配置: %w", err)
+	}
+	control, _ := root["control"].(map[string]any)
+	if control == nil {
+		control = map[string]any{}
+		root["control"] = control
+	}
+	changed := false
+	if enabled, _ := control["enabled"].(bool); !enabled {
+		control["enabled"] = true
+		changed = true
+	}
+	if current, _ := control["socket"].(string); current != socket {
+		control["socket"] = socket
+		changed = true
+	}
+	if _, ok := control["mode"]; !ok {
+		control["mode"] = "0660"
+		changed = true
+	}
+	if !changed {
+		return content, false, nil
+	}
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, false, err
+	}
+	return append(out, '\n'), true, nil
 }
 
 // ReadConfig returns the live config content.

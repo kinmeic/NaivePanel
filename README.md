@@ -16,10 +16,15 @@ BypassCore 分流核心与 Geo 数据文件。
 - **面板自更新**：设置页检查/安装新版本（GitHub release，SHA256SUMS 校验 + 安装前自检 +
   替换后自动重启），可开启每天自动更新
 - **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
-  配置编辑（`-check-config` → 控制面事务热重载）、服务控制、运行状态查看
+  配置编辑（`-check-config` → 控制面事务热重载）、服务控制、运行状态查看；存量配置未开启
+  control socket 时会给出明确诊断和一键启用入口
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源
 - **服务日志**：面板内查看 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
+
+从磁盘导入普通 Caddyfile 时，面板同时识别自身的 `route` 格式和常见的无 `route` 格式。
+域名、建站类型、`forward_proxy`、`handle` 块仍以表单编辑；`tls` / `log` / `bind` 等站点选项
+以及无法映射到简化字段的 HTTP 指令会保留在结构化表单的对应区域。只有无法安全拆分的片段才回退到整段原文模式。
 
 ## 安装
 
@@ -53,7 +58,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.1.0
+VER=v0.3.4
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"

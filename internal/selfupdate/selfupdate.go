@@ -23,7 +23,15 @@ import (
 
 const repoAPI = "https://api.github.com/repos/kinmeic/NaivePanel/releases/latest"
 
-var httpClient = &http.Client{Timeout: 120 * time.Second}
+var httpClient = &http.Client{
+	Timeout: 120 * time.Second,
+	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("拒绝更新下载重定向到非 HTTPS 地址")
+		}
+		return nil
+	},
+}
 
 // Release is a GitHub release with its downloadable assets.
 type Release struct {
@@ -52,7 +60,7 @@ func Latest(mirror string) (*Release, error) {
 		return nil, fmt.Errorf("GitHub API 返回 %d", resp.StatusCode)
 	}
 	var rel Release
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&rel); err != nil {
 		return nil, err
 	}
 	if mirror != "" {
