@@ -1,0 +1,29 @@
+{{define "layout.html"}}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · NaivePanel</title>
+<link rel="stylesheet" href="{{.Base}}/static/style.css">
+</head>
+<body>
+<nav class="topnav">
+  <span class="brand">NaivePanel</span>
+  <a href="{{.Base}}/">仪表盘</a>
+  <a href="{{.Base}}/sites">站点</a>
+  <a href="{{.Base}}/caddy/preview">Caddy 配置</a>
+  <a href="{{.Base}}/bypasscore">BypassCore</a>
+  <a href="{{.Base}}/geo">Geo 数据</a>
+  <a href="{{.Base}}/settings">设置</a>
+  <form method="post" action="{{.Base}}/logout" class="logout">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit">退出</button>
+  </form>
+</nav>
+<main>
+{{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+{{template "content" .}}
+</main>
+<script src="{{.Base}}/static/app.js"></script>
+</body>
+</html>{{end}}

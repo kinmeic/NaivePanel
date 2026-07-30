@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>二次验证 · NaivePanel</title>
+<link rel="stylesheet" href="{{.Base}}/static/style.css">
+</head>
+<body class="auth">
+<div class="auth-box">
+  <h1>二次验证</h1>
+  <p class="muted">请输入认证器中的 6 位验证码，或一次性恢复码。</p>
+  {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+  <form method="post" action="{{.Base}}/login/totp">
+    <label>验证码<input name="code" autocomplete="one-time-code" inputmode="numeric" required autofocus></label>
+    <button type="submit" class="primary">验证</button>
+  </form>
+</div>
+</body>
+</html>

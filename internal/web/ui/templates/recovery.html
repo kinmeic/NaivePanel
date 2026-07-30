@@ -1,0 +1,8 @@
+{{define "content"}}
+<h1>MFA 已启用</h1>
+<p>以下是 10 个一次性恢复码，<strong>仅显示这一次</strong>。请立即抄写或保存到安全位置。每个恢复码只能使用一次，用于无法使用认证器时登录。</p>
+<div class="recovery-codes">
+{{range .Data.Codes}}<code>{{.}}</code>{{end}}
+</div>
+<p><a class="btn primary" href="{{.Base}}/">我已妥善保存，进入面板</a></p>
+{{end}}

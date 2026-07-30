@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · NaivePanel</title>
+<link rel="stylesheet" href="{{.Base}}/static/style.css">
+</head>
+<body class="auth">
+<div class="auth-box">
+  <h1>NaivePanel</h1>
+  {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+  <form method="post" action="{{.Base}}/login">
+    <label>账号<input name="username" autocomplete="username" required autofocus></label>
+    <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="primary">登录</button>
+  </form>
+</div>
+</body>
+</html>

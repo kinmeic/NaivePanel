@@ -1,0 +1,28 @@
+{{define "content"}}
+<h1>站点管理 <a class="btn primary" href="{{.Base}}/sites/new">+ 新建站点</a></h1>
+{{if .Data.Sites}}
+<table>
+  <thead><tr><th>域名</th><th>类型</th><th>forward_proxy</th><th>upstream</th><th>备注</th><th>操作</th></tr></thead>
+  <tbody>
+  {{range .Data.Sites}}
+  <tr>
+    <td><strong>{{.Domain}}</strong>{{if eq .Domain $.Data.HostSite}} <span class="tag">面板寄宿</span>{{end}}</td>
+    <td>{{if .RawMode}}高级模式{{else}}{{.Web.Type}}{{end}}</td>
+    <td>{{if .ForwardProxy.Enabled}}启用（{{len .ForwardProxy.Accounts}} 个账号）{{else}}关闭{{end}}</td>
+    <td class="mono">{{if .ForwardProxy.Enabled}}{{if .ForwardProxy.UseBypassCore}}BypassCore{{else}}{{if .ForwardProxy.Upstream}}{{.ForwardProxy.Upstream}}{{else}}直连{{end}}{{end}}{{else}}-{{end}}</td>
+    <td>{{if .ExtraBlocks}}{{len .ExtraBlocks}} 个自定义块{{end}}</td>
+    <td>
+      <a class="btn" href="{{$.Base}}/sites/{{.Domain}}/edit">编辑</a>
+      <form method="post" action="{{$.Base}}/sites/{{.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Domain}}？">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <button type="submit" class="danger">删除</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">还没有站点，点击右上角新建。</p>
+{{end}}
+{{end}}

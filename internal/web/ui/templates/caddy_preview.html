@@ -1,0 +1,9 @@
+{{define "content"}}
+<h1>Caddy 配置预览</h1>
+{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+<form method="post" action="{{.Base}}/caddy/reload" class="inline-block">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <button type="submit" class="btn" data-confirm="确定要用线上配置文件重载 Caddy？">重载 Caddy</button>
+</form>
+<pre class="preview">{{.Data.Preview}}</pre>
+{{end}}

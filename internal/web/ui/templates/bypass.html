@@ -1,0 +1,42 @@
+{{define "content"}}
+<h1>BypassCore</h1>
+<div class="cards">
+  <div class="card">
+    <h3>安装状态</h3>
+    {{if .Data.Installed}}
+      <p><span class="ok">已安装</span> <span class="mono">{{.Data.Version}}</span></p>
+      <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+    {{else}}
+      <p><span class="warn">未安装</span></p>
+    {{end}}
+    <form method="post" action="{{.Base}}/bypasscore/install" class="inline" data-confirm="将从 GitHub 下载最新 release 并安装/更新，继续？">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button type="submit" class="primary">{{if .Data.Installed}}更新到最新版{{else}}安装 BypassCore{{end}}</button>
+    </form>
+  </div>
+  <div class="card">
+    <h3>服务控制</h3>
+    <form method="post" action="{{.Base}}/bypasscore/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button name="action" value="start" class="btn">启动</button>
+      <button name="action" value="stop" class="btn">停止</button>
+      <button name="action" value="restart" class="btn">重启</button>
+    </form>
+    <p class="muted">本机 SOCKS5 入站端口：<code>{{.Data.SocksPort}}</code>（站点启用 BypassCore 分流时 upstream 指向它）</p>
+  </div>
+  <div class="card">
+    <h3>配置</h3>
+    <p class="mono">{{.Data.ConfigPath}}</p>
+    <p><a class="btn" href="{{.Base}}/bypasscore/config">编辑配置 →</a></p>
+  </div>
+</div>
+
+<h2>运行状态（控制面 /v1/status）</h2>
+{{if .Data.Status}}
+<pre class="preview">{{prettyJSON .Data.Status}}</pre>
+{{else if .Data.StatusRaw}}
+<pre class="preview">{{.Data.StatusRaw}}</pre>
+{{else}}
+<div class="error">控制面不可用：{{.Data.StatusError}}（服务未运行或未启用 control socket 时属正常）</div>
+{{end}}
+{{end}}

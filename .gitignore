@@ -1,0 +1,11 @@
+# Build artifacts
+bin/
+dist/
+
+# Go
+*.test
+*.out
+
+# OS / editor
+.DS_Store
+*.swp

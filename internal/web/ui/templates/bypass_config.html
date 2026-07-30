@@ -1,0 +1,13 @@
+{{define "content"}}
+<h1>BypassCore 配置编辑</h1>
+{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+<p class="muted">保存时将执行：JSON 校验 → bypasscore -check-config → 备份 → 落盘 → 控制面热重载（必要时重启服务）。</p>
+<form method="post" action="{{.Base}}/bypasscore/config">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <textarea name="config" rows="32" class="mono wide">{{.Data.Config}}</textarea>
+  <div class="actions">
+    <button type="submit" class="primary">校验并生效</button>
+    <a class="btn" href="{{.Base}}/bypasscore">返回</a>
+  </div>
+</form>
+{{end}}

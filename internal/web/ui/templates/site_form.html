@@ -1,0 +1,103 @@
+{{define "content"}}
+{{$base := .Base}}
+{{$csrf := .CSRF}}
+{{$d := .Data}}
+{{$s := $d.Site}}
+<h1>{{if $d.IsNew}}新建站点{{else}}编辑站点 {{$s.Domain}}{{end}}</h1>
+{{if $d.Error}}<div class="error">{{$d.Error}}</div>{{end}}
+{{if and (eq $s.Domain $d.HostSite) (not $d.IsNew)}}
+<div class="flash">该站点是面板寄宿站点，面板反代配置会自动注入，请勿删除面板路径相关配置。</div>
+{{end}}
+
+<form method="post" id="site-form" action="{{if $d.IsNew}}{{$base}}/sites/new{{else}}{{$base}}/sites/{{$s.Domain}}/edit{{end}}">
+  <input type="hidden" name="_csrf" value="{{$csrf}}">
+
+  <fieldset>
+    <legend>基本</legend>
+    <label>域名
+      <input name="domain" value="{{$s.Domain}}" placeholder="example.com" {{if not $d.IsNew}}readonly{{end}} required>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="raw_mode" {{if $s.RawMode}}checked{{end}}>
+      高级模式（直接维护该站点的原始 Caddyfile 片段，结构化配置失效）
+    </label>
+  </fieldset>
+
+  <fieldset id="raw-section" {{if not $s.RawMode}}class="hidden"{{end}}>
+    <legend>原始 Caddyfile 片段</legend>
+    <textarea name="raw" rows="18" class="mono">{{$s.Raw}}</textarea>
+  </fieldset>
+
+  <div id="structured-section" {{if $s.RawMode}}class="hidden"{{end}}>
+  <fieldset>
+    <legend>forward_proxy（NaiveProxy）</legend>
+    <label class="check">
+      <input type="checkbox" name="fp_enabled" {{if $s.ForwardProxy.Enabled}}checked{{end}}> 启用 forward_proxy
+    </label>
+    <p class="muted">hide_ip / hide_via / probe_resistance 为内置加固项，自动注入，无需配置。</p>
+    <label>basic_auth 账号（每行一个：用户名 密码）
+      <textarea name="fp_accounts" rows="4" class="mono" placeholder="user1 password1&#10;user2 password2">{{$d.Accounts}}</textarea>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="fp_bypass" {{if $s.ForwardProxy.UseBypassCore}}checked{{end}}>
+      使用本机 BypassCore 分流（upstream 自动设为 socks5://127.0.0.1:面板配置端口）
+    </label>
+    <label>自定义 upstream（不使用 BypassCore 时生效，留空为直连）
+      <input name="fp_upstream" value="{{$s.ForwardProxy.Upstream}}" placeholder="https://user:pass@upstream.com:443 或 socks5://...">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>建站</legend>
+    <label>站点类型
+      <select name="web_type">
+        <option value="none" {{if eq $s.Web.Type "none"}}selected{{end}}>无（纯代理站）</option>
+        <option value="static" {{if eq $s.Web.Type "static"}}selected{{end}}>静态站</option>
+        <option value="php" {{if eq $s.Web.Type "php"}}selected{{end}}>PHP 站（php-fpm）</option>
+        <option value="reverse_proxy" {{if eq $s.Web.Type "reverse_proxy"}}selected{{end}}>反向代理</option>
+      </select>
+    </label>
+    <label>站点目录（静态/PHP）
+      <input name="web_root" value="{{$s.Web.Root}}" placeholder="/var/www/example.com">
+    </label>
+    <label>php-fpm socket（PHP 站）
+      <input name="web_php_socket" list="php-sockets" value="{{$s.Web.PHPSocket}}" placeholder="unix//run/php/php8.3-fpm.sock">
+      <datalist id="php-sockets">
+        {{range $d.PHPSockets}}<option value="{{.}}">{{end}}
+      </datalist>
+    </label>
+    <label>反代上游（反向代理站）
+      <input name="web_proxy_to" value="{{$s.Web.ProxyTo}}" placeholder="127.0.0.1:3000">
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>自定义 handle / handle_path 块（在 forward_proxy 之前按序执行）</legend>
+    <div id="extra-blocks">
+    {{range $s.ExtraBlocks}}
+      <div class="eb-row">
+        <select name="eb_type">
+          <option value="handle" {{if eq .Type "handle"}}selected{{end}}>handle</option>
+          <option value="handle_path" {{if eq .Type "handle_path"}}selected{{end}}>handle_path</option>
+        </select>
+        <input name="eb_matcher" value="{{.Matcher}}" placeholder="/api/*">
+        <textarea name="eb_content" rows="3" class="mono" placeholder="reverse_proxy 127.0.0.1:8080">{{.Content}}</textarea>
+        <button type="button" class="eb-del danger">删除</button>
+      </div>
+    {{end}}
+    </div>
+    <button type="button" id="eb-add" class="btn">+ 添加自定义块</button>
+  </fieldset>
+  </div>
+
+  <div class="actions">
+    <button type="submit" class="primary">保存并生效</button>
+    <button type="button" id="btn-preview" class="btn">刷新预览</button>
+  </div>
+</form>
+
+<fieldset>
+  <legend>配置预览（该站点生成的 Caddyfile 片段）</legend>
+  <pre id="preview" class="preview">{{$d.Preview}}</pre>
+</fieldset>
+{{end}}
