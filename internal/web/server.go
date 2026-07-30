@@ -31,6 +31,7 @@ type Server struct {
 	Bypass   *bypasscore.Manager
 	Sessions *auth.Store
 	Limiter  *auth.Limiter
+	Version  string
 
 	pages map[string]*template.Template
 	mux   *http.ServeMux
@@ -47,13 +48,14 @@ type pageData struct {
 }
 
 // New builds the server and its routes.
-func New(cfg *config.Config) (*Server, error) {
+func New(cfg *config.Config, version string) (*Server, error) {
 	s := &Server{
 		Cfg:      cfg,
 		Caddy:    caddymgr.New(cfg),
 		Bypass:   bypasscore.New(cfg),
 		Sessions: auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
 		Limiter:  auth.NewLimiter(5, 15*time.Minute),
+		Version:  version,
 		pages:    map[string]*template.Template{},
 	}
 	if err := s.parseTemplates(); err != nil {
@@ -129,9 +131,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteUpdate))
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/delete", s.protect(s.handleSiteDelete))
 	s.mux.HandleFunc("POST "+bp+"/sites/preview-render", s.protect(s.handleSitePreviewRender))
-	s.mux.HandleFunc("POST "+bp+"/sites/import", s.protect(s.handleSiteImport))
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/sync-disk", s.protect(s.handleSiteSyncDisk))
-	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/sync-model", s.protect(s.handleSiteSyncModel))
 
 	s.mux.HandleFunc("GET "+bp+"/caddy/preview", s.protect(s.handleCaddyPreview))
 	s.mux.HandleFunc("POST "+bp+"/caddy/reload", s.protect(s.handleCaddyReload))
@@ -152,6 +152,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/confirm", s.protect(s.handleTOTPConfirm))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/disable", s.protect(s.handleTOTPDisable))
 	s.mux.HandleFunc("POST "+bp+"/settings/hostsite", s.protect(s.handleHostSite))
+	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate", s.protect(s.handleSelfUpdate))
+	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate/check", s.protect(s.handleSelfUpdateCheck))
 }
 
 // Handler returns the root handler with the HTTPS gate and security headers.

@@ -17,6 +17,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	geoCfg := s.Cfg.GeoSnapshot()
 	data := map[string]any{
 		"Domain":        s.Cfg.Domain,
+		"Version":       s.Version,
 		"BasePath":      s.Cfg.BasePath,
 		"HostSite":      s.Cfg.GetHostSite(),
 		"SiteCount":     len(s.Cfg.SitesSnapshot()),
@@ -31,33 +32,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "dashboard", "仪表盘", data)
 }
 
-// handleCaddyPreview shows the Caddy configuration. ?view=files (default)
-// shows the real on-disk files; ?view=adapt shows `caddy adapt` JSON (what
-// Caddy actually parsed); ?view=render shows what the panel model would write.
+// handleCaddyPreview shows the real on-disk Caddy configuration — the main
+// Caddyfile plus every site snippet, i.e. exactly what Caddy loads.
 func (s *Server) handleCaddyPreview(w http.ResponseWriter, r *http.Request) {
-	view := r.URL.Query().Get("view")
-	if view == "" {
-		view = "files"
-	}
-	data := map[string]any{"View": view}
-	switch view {
-	case "adapt":
-		content, err := s.Caddy.AdaptJSON()
-		data["Content"] = content
-		if err != nil {
-			data["Error"] = err.Error()
-		}
-	case "render":
-		content, err := s.Caddy.Preview()
-		data["Content"] = content
-		if err != nil {
-			data["Error"] = err.Error()
-		}
-	default:
-		data["View"] = "files"
-		data["Content"] = s.Caddy.LivePreview()
-	}
-	s.render(w, r, "caddy_preview", "Caddy 配置预览", data)
+	s.render(w, r, "caddy_preview", "Caddy 配置预览", map[string]any{
+		"Content": s.Caddy.LivePreview(),
+	})
 }
 
 // handleCaddyReload reloads Caddy with the live on-disk config.

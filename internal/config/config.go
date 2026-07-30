@@ -73,6 +73,11 @@ type Config struct {
 	// so the panel is only reachable over HTTPS through Caddy.
 	ProxyToken string `yaml:"proxy_token"`
 
+	// AutoUpdate enables daily self-update checks: when a newer GitHub
+	// release exists the panel downloads, verifies and installs it, then
+	// restarts itself.
+	AutoUpdate bool `yaml:"auto_update"`
+
 	Caddy      CaddyPaths   `yaml:"caddy"`
 	BypassCore BypassCore   `yaml:"bypasscore"`
 	Geo        Geo          `yaml:"geo"`
@@ -243,6 +248,13 @@ func (c *Config) TOTPState() (enabled bool, secret string) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.TOTPEnabled, c.TOTPSecret
+}
+
+// SelfUpdateEnabled reports whether daily self-update checks are on.
+func (c *Config) SelfUpdateEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AutoUpdate
 }
 
 // AdminPassHash returns the stored password hash.

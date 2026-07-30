@@ -2,14 +2,15 @@
 <h1>仪表盘</h1>
 <div class="cards">
   <div class="card">
-    <h3>面板</h3>
+    <h3><i data-lucide="gauge"></i>面板</h3>
+    <p>版本：<code>{{.Data.Version}}</code></p>
     <p>域名：<strong>{{.Data.Domain}}</strong></p>
     <p>面板路径：<code>{{.Data.BasePath}}</code></p>
     <p>寄宿站点：{{.Data.HostSite}}</p>
     <p>MFA：{{if .Data.TOTPEnabled}}<span class="ok">已启用</span>{{else}}<span class="warn">未启用（建议到 设置 开启）</span>{{end}}</p>
   </div>
   <div class="card">
-    <h3>服务状态</h3>
+    <h3><i data-lucide="activity"></i>服务状态</h3>
     <p>naivepanel：{{if .Data.PanelActive}}<span class="ok">运行中</span>{{else}}<span class="bad">异常</span>{{end}}</p>
     <p>caddy：{{if .Data.CaddyActive}}<span class="ok">运行中</span>{{else}}<span class="bad">未运行</span>{{end}}</p>
     <p>bypasscore：
@@ -20,12 +21,12 @@
     </p>
   </div>
   <div class="card">
-    <h3>站点</h3>
+    <h3><i data-lucide="globe"></i>站点</h3>
     <p>共 {{.Data.SiteCount}} 个站点</p>
     <p><a href="{{.Base}}/sites">管理站点 →</a></p>
   </div>
   <div class="card">
-    <h3>Geo 数据</h3>
+    <h3><i data-lucide="map"></i>Geo 数据</h3>
     {{range .Data.Geo}}
     <p>{{.Name}}：{{if .Exists}}{{fmtTime .ModTime}}{{else}}<span class="warn">缺失</span>{{end}}</p>
     {{end}}

@@ -3,9 +3,6 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/kinmeic/NaivePanel/internal/sites"
 )
@@ -23,35 +20,6 @@ func (s *Server) importSiteFromDisk(content string) (*sites.Site, string, error)
 		return nil, "", fmt.Errorf("无法从配置中识别站点域名")
 	}
 	return &sites.Site{Domain: domain, RawMode: true, Raw: content}, "高级模式", nil
-}
-
-// handleSiteImport adopts an unmanaged on-disk snippet into the panel model.
-func (s *Server) handleSiteImport(w http.ResponseWriter, r *http.Request) {
-	file := filepath.Base(r.FormValue("file"))
-	if file == "." || !strings.HasSuffix(file, ".caddy") {
-		s.setFlash(w, "非法的文件名")
-		s.redirect(w, r, "/sites")
-		return
-	}
-	data, err := os.ReadFile(filepath.Join(s.Cfg.Caddy.SitesDir, file))
-	if err != nil {
-		s.setFlash(w, "读取失败: "+err.Error())
-		s.redirect(w, r, "/sites")
-		return
-	}
-	st, mode, err := s.importSiteFromDisk(string(data))
-	if err != nil {
-		s.setFlash(w, "导入失败: "+err.Error())
-		s.redirect(w, r, "/sites")
-		return
-	}
-	if err := s.applySiteChange(st, s.Cfg.FindSite(st.Domain) >= 0); err != nil {
-		s.setFlash(w, "导入失败: "+err.Error())
-		s.redirect(w, r, "/sites")
-		return
-	}
-	s.setFlash(w, fmt.Sprintf("已从 %s 导入站点 %s（%s）", file, st.Domain, mode))
-	s.redirect(w, r, "/sites")
 }
 
 // handleSiteSyncDisk re-imports a managed site's on-disk snippet, letting
@@ -76,23 +44,5 @@ func (s *Server) handleSiteSyncDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setFlash(w, fmt.Sprintf("已用磁盘配置更新站点 %s 的模型（%s）", domain, mode))
-	s.redirect(w, r, "/sites")
-}
-
-// handleSiteSyncModel re-renders from the panel model onto disk, letting the
-// model win over external edits.
-func (s *Server) handleSiteSyncModel(w http.ResponseWriter, r *http.Request) {
-	domain := r.PathValue("domain")
-	if s.Cfg.FindSite(domain) < 0 {
-		s.setFlash(w, "站点不存在")
-		s.redirect(w, r, "/sites")
-		return
-	}
-	if err := s.Caddy.Apply(); err != nil {
-		s.setFlash(w, "覆盖失败: "+err.Error())
-		s.redirect(w, r, "/sites")
-		return
-	}
-	s.setFlash(w, "已用面板模型覆盖 "+domain+" 的磁盘配置")
 	s.redirect(w, r, "/sites")
 }

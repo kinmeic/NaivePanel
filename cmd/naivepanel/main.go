@@ -15,6 +15,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/geo"
+	"github.com/kinmeic/NaivePanel/internal/selfupdate"
 	"github.com/kinmeic/NaivePanel/internal/service"
 	"github.com/kinmeic/NaivePanel/internal/web"
 )
@@ -53,13 +54,16 @@ func main() {
 		log.Fatalf("创建目录失败: %v", err)
 	}
 
-	srv, err := web.New(cfg)
+	srv, err := web.New(cfg, version)
 	if err != nil {
 		log.Fatalf("初始化 Web 服务失败: %v", err)
 	}
 
 	if cfg.Geo.AutoUpdateWeekly {
 		go geoAutoUpdate(cfg)
+	}
+	if cfg.SelfUpdateEnabled() {
+		go selfAutoUpdate(cfg)
 	}
 
 	httpSrv := &http.Server{
@@ -97,6 +101,30 @@ func geoAutoUpdate(cfg *config.Config) {
 	}
 }
 
+// selfAutoUpdate checks for a newer NaivePanel release once a day; when one
+// exists it is downloaded, verified, installed and the panel restarts itself.
+func selfAutoUpdate(cfg *config.Config) {
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for range ticker.C {
+		rel, err := selfupdate.Latest(cfg.GeoSnapshot().Mirror)
+		if err != nil {
+			log.Printf("面板自动更新：检查失败: %v", err)
+			continue
+		}
+		if !selfupdate.Newer(version, rel.TagName) {
+			continue
+		}
+		tag, err := selfupdate.Apply(cfg.GeoSnapshot().Mirror)
+		if err != nil {
+			log.Printf("面板自动更新：安装 %s 失败: %v", rel.TagName, err)
+			continue
+		}
+		log.Printf("面板已自动更新到 %s，正在重启", tag)
+		selfupdate.RestartSelf()
+	}
+}
+
 // runHashPassword implements `naivepanel hash-password` for install.sh.
 func runHashPassword() {
 	var pass string
@@ -121,10 +149,10 @@ func runHashPassword() {
 // a systemd / procd (OpenWrt) / launchd (macOS) service.
 func runServiceInstall() {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	conf := fs.String("config", config.DefaultConfigPath, "面板配置文件路径（必须已存在）")
-	bin := fs.String("bin", "", "二进制安装目标路径（默认 systemd/macOS 为 /usr/local/bin/naivepanel，OpenWrt 为 /usr/bin/naivepanel）")
-	start := fs.Bool("start", true, "安装后立即启动服务")
-	dryRun := fs.Bool("dry-run", false, "只打印将执行的操作，不修改系统")
+	conf := fs.String("config", config.DefaultConfigPath, "path to the panel config file (must already exist)")
+	bin := fs.String("bin", "", "target binary path (default: /usr/local/bin/naivepanel, /usr/bin/naivepanel on OpenWrt)")
+	start := fs.Bool("start", true, "start the service right after enabling it")
+	dryRun := fs.Bool("dry-run", false, "print the actions without modifying the system")
 	_ = fs.Parse(os.Args[2:])
 
 	if err := service.Install(service.InstallOptions{
@@ -133,18 +161,18 @@ func runServiceInstall() {
 		Start:      *start,
 		DryRun:     *dryRun,
 	}); err != nil {
-		log.Fatalf("安装服务失败: %v", err)
+		log.Fatalf("service install failed: %v", err)
 	}
 }
 
 // runServiceUninstall implements `naivepanel uninstall`.
 func runServiceUninstall() {
 	fs := flag.NewFlagSet("uninstall", flag.ExitOnError)
-	purge := fs.Bool("purge", false, "同时删除二进制与 /etc/naivepanel 配置目录")
-	dryRun := fs.Bool("dry-run", false, "只打印将执行的操作，不修改系统")
+	purge := fs.Bool("purge", false, "also remove the binary and the /etc/naivepanel config directory")
+	dryRun := fs.Bool("dry-run", false, "print the actions without modifying the system")
 	_ = fs.Parse(os.Args[2:])
 
 	if err := service.Uninstall(*purge, *dryRun); err != nil {
-		log.Fatalf("卸载服务失败: %v", err)
+		log.Fatalf("service uninstall failed: %v", err)
 	}
 }

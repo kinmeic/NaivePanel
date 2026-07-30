@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>站点管理 <a class="btn primary" href="{{.Base}}/sites/new">+ 新建站点</a></h1>
+<h1>站点管理 <a class="btn primary" href="{{.Base}}/sites/new"><i data-lucide="plus"></i>新建站点</a></h1>
 {{if .Data.Rows}}
 <table>
   <thead><tr><th>域名</th><th>类型</th><th>forward_proxy</th><th>upstream</th><th>磁盘状态</th><th>备注</th><th>操作</th></tr></thead>
@@ -17,20 +17,16 @@
     </td>
     <td>{{if .Site.ExtraBlocks}}{{len .Site.ExtraBlocks}} 个自定义块{{end}}</td>
     <td>
-      <a class="btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit">编辑</a>
+      <a class="btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit"><i data-lucide="pencil"></i>编辑</a>
       {{if .Drift}}
       <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/sync-disk" class="inline" data-confirm="以磁盘配置为准，更新站点 {{.Site.Domain}} 的面板模型？">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <button type="submit">以磁盘为准</button>
-      </form>
-      <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/sync-model" class="inline" data-confirm="以面板模型为准，覆盖 {{.Site.Domain}} 的磁盘配置？">
-        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <button type="submit">以面板为准</button>
+        <button type="submit"><i data-lucide="hard-drive-download"></i>以磁盘为准</button>
       </form>
       {{end}}
       <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Site.Domain}}？">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <button type="submit" class="danger">删除</button>
+        <button type="submit" class="danger"><i data-lucide="trash-2"></i>删除</button>
       </form>
     </td>
   </tr>
@@ -39,28 +35,5 @@
 </table>
 {{else}}
 <p class="muted">还没有站点，点击右上角新建。</p>
-{{end}}
-
-{{if .Data.Unmanaged}}
-<h2>磁盘上未托管的配置文件</h2>
-<p class="muted">以下文件存在于 Caddy 的站点目录中，但不在面板模型里（可能是安装脚本生成或手工添加的）。导入后由面板接管管理。</p>
-<table>
-  <thead><tr><th>文件</th><th>域名</th><th>操作</th></tr></thead>
-  <tbody>
-  {{range .Data.Unmanaged}}
-  <tr>
-    <td class="mono">{{.FileName}}</td>
-    <td><strong>{{.Domain}}</strong></td>
-    <td>
-      <form method="post" action="{{$.Base}}/sites/import" class="inline" data-confirm="导入 {{.FileName}}（{{.Domain}}）到面板管理？">
-        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <input type="hidden" name="file" value="{{.FileName}}">
-        <button type="submit" class="primary">导入到面板</button>
-      </form>
-    </td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
 {{end}}
 {{end}}

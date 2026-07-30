@@ -6,8 +6,8 @@
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <textarea name="config" rows="32" class="mono wide">{{.Data.Config}}</textarea>
   <div class="actions">
-    <button type="submit" class="primary">校验并生效</button>
-    <a class="btn" href="{{.Base}}/bypasscore">返回</a>
+    <button type="submit" class="primary"><i data-lucide="check"></i>校验并生效</button>
+    <a class="btn" href="{{.Base}}/bypasscore"><i data-lucide="arrow-left"></i>返回</a>
   </div>
 </form>
 {{end}}

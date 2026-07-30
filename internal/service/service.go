@@ -46,9 +46,9 @@ func Detect() (Platform, error) {
 		if fileExists("/run/systemd/system") || commandExists("systemctl") {
 			return PlatformSystemd, nil
 		}
-		return 0, errors.New("未识别的服务管理器（非 systemd、非 procd）")
+		return 0, errors.New("unrecognized service manager (neither systemd nor procd found)")
 	}
-	return 0, fmt.Errorf("不支持的操作系统: %s", runtime.GOOS)
+	return 0, fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 }
 
 // InstallOptions controls service installation.
@@ -96,7 +96,7 @@ func Install(opts InstallOptions) error {
 		return err
 	}
 	if st, err := os.Stat(confAbs); err != nil || st.IsDir() {
-		return fmt.Errorf("配置文件不存在: %s（请先运行 install.sh 或手动创建配置）", confAbs)
+		return fmt.Errorf("config file not found: %s (run install.sh first or create it manually)", confAbs)
 	}
 	binPath := opts.BinPath
 	if binPath == "" {
@@ -125,20 +125,20 @@ func Install(opts InstallOptions) error {
 
 	// 1. Install binary if not already at the target path.
 	if exe != binPath {
-		if err := run("安装二进制到 "+binPath, func() error {
+		if err := run("Install binary to "+binPath, func() error {
 			return copyFileAtomic(exe, binPath, 0755)
 		}); err != nil {
 			return err
 		}
 	} else {
-		fmt.Println("[✓] 二进制已位于", binPath)
+		fmt.Println("[✓] Binary already at", binPath)
 	}
 
 	// 2. Platform-specific unit installation.
 	switch plat {
 	case PlatformSystemd:
 		unit := systemdUnit(binPath, confAbs)
-		if err := run("写入 /etc/systemd/system/naivepanel.service", func() error {
+		if err := run("Write /etc/systemd/system/naivepanel.service", func() error {
 			return os.WriteFile("/etc/systemd/system/naivepanel.service", []byte(unit), 0644)
 		}); err != nil {
 			return err
@@ -166,7 +166,7 @@ func Install(opts InstallOptions) error {
 
 	case PlatformProcd:
 		script := procdScript(binPath, confAbs)
-		if err := run("写入 /etc/init.d/naivepanel", func() error {
+		if err := run("Write /etc/init.d/naivepanel", func() error {
 			return os.WriteFile("/etc/init.d/naivepanel", []byte(script), 0755)
 		}); err != nil {
 			return err
@@ -190,7 +190,7 @@ func Install(opts InstallOptions) error {
 	case PlatformLaunchd:
 		plist := launchdPlist(binPath, confAbs)
 		const plistPath = "/Library/LaunchDaemons/com.naivepanel.plist"
-		if err := run("写入 "+plistPath, func() error {
+		if err := run("Write "+plistPath, func() error {
 			return os.WriteFile(plistPath, []byte(plist), 0644)
 		}); err != nil {
 			return err
@@ -212,9 +212,9 @@ func Install(opts InstallOptions) error {
 		}
 	}
 
-	fmt.Printf("\n服务已安装（%s）\n  二进制: %s\n  配置:   %s\n", plat, binPath, confAbs)
+	fmt.Printf("\nService installed (%s)\n  Binary: %s\n  Config: %s\n", plat, binPath, confAbs)
 	if !opts.Start && !opts.DryRun {
-		fmt.Println("服务已设为开机启动，但尚未启动；用 -start 安装并立即启动。")
+		fmt.Println("Service is enabled at boot but not started yet; install with -start to start it now.")
 	}
 	return nil
 }
@@ -246,7 +246,7 @@ func Uninstall(purge, dryRun bool) error {
 		}); err != nil {
 			return err
 		}
-		if err := run("删除 /etc/systemd/system/naivepanel.service", func() error {
+		if err := run("Remove /etc/systemd/system/naivepanel.service", func() error {
 			return os.RemoveAll("/etc/systemd/system/naivepanel.service")
 		}); err != nil {
 			return err
@@ -260,7 +260,7 @@ func Uninstall(purge, dryRun bool) error {
 	case PlatformProcd:
 		_ = exec.Command("/etc/init.d/naivepanel", "stop").Run()
 		_ = exec.Command("/etc/init.d/naivepanel", "disable").Run()
-		if err := run("删除 /etc/init.d/naivepanel", func() error {
+		if err := run("Remove /etc/init.d/naivepanel", func() error {
 			return os.RemoveAll("/etc/init.d/naivepanel")
 		}); err != nil {
 			return err
@@ -269,7 +269,7 @@ func Uninstall(purge, dryRun bool) error {
 	case PlatformLaunchd:
 		_ = exec.Command("launchctl", "bootout", "system/com.naivepanel").Run()
 		_ = exec.Command("launchctl", "unload", "-w", "/Library/LaunchDaemons/com.naivepanel.plist").Run()
-		if err := run("删除 /Library/LaunchDaemons/com.naivepanel.plist", func() error {
+		if err := run("Remove /Library/LaunchDaemons/com.naivepanel.plist", func() error {
 			return os.RemoveAll("/Library/LaunchDaemons/com.naivepanel.plist")
 		}); err != nil {
 			return err
@@ -278,20 +278,20 @@ func Uninstall(purge, dryRun bool) error {
 
 	if purge {
 		bin := defaultBinPath(plat)
-		if err := run("删除二进制 "+bin, func() error {
+		if err := run("Remove binary "+bin, func() error {
 			return os.Remove(bin)
 		}); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		if err := run("删除配置目录 /etc/naivepanel", func() error {
+		if err := run("Remove config directory /etc/naivepanel", func() error {
 			return os.RemoveAll("/etc/naivepanel")
 		}); err != nil {
 			return err
 		}
 	} else {
-		fmt.Println("\n二进制与配置已保留；如需一并删除，使用 uninstall -purge")
+		fmt.Println("\nBinary and config kept; use uninstall -purge to remove them as well.")
 	}
-	fmt.Printf("服务已卸载（%s）\n", plat)
+	fmt.Printf("Service uninstalled (%s)\n", plat)
 	return nil
 }
 

@@ -1,19 +1,9 @@
 {{define "content"}}
 <h1>Caddy 配置预览</h1>
-{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
-<div class="tabs">
-  <a class="btn {{if eq .Data.View "files"}}active{{end}}" href="{{.Base}}/caddy/preview?view=files">磁盘实况</a>
-  <a class="btn {{if eq .Data.View "adapt"}}active{{end}}" href="{{.Base}}/caddy/preview?view=adapt">运行配置（adapt）</a>
-  <a class="btn {{if eq .Data.View "render"}}active{{end}}" href="{{.Base}}/caddy/preview?view=render">面板模型渲染</a>
-</div>
-<p class="muted">
-  {{if eq .Data.View "files"}}当前磁盘上的真实 Caddyfile 与站点片段，即 Caddy 实际加载的内容。
-  {{else if eq .Data.View "adapt"}}<span>caddy adapt 解析线上配置得到的 JSON —— Caddy 进程眼中的最终配置。</span>
-  {{else}}面板根据站点模型将要写入的配置；与「磁盘实况」不一致说明磁盘被外部修改过。{{end}}
-</p>
+<p class="muted">当前磁盘上的真实 Caddyfile 与站点片段，即 Caddy 实际加载的内容。</p>
 <form method="post" action="{{.Base}}/caddy/reload" class="inline-block">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit" class="btn" data-confirm="确定要用线上配置文件重载 Caddy？">重载 Caddy</button>
+  <button type="submit" class="btn" data-confirm="确定要用线上配置文件重载 Caddy？"><i data-lucide="refresh-cw"></i>重载 Caddy</button>
 </form>
 <pre class="preview">{{.Data.Content}}</pre>
 {{end}}

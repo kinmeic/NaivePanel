@@ -3,11 +3,14 @@ package web
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"image/png"
 	"net/http"
+	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
 	"github.com/kinmeic/NaivePanel/internal/config"
+	"github.com/kinmeic/NaivePanel/internal/selfupdate"
 	"github.com/pquerna/otp"
 )
 
@@ -23,6 +26,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		"RecoveryLeft":   s.Cfg.RecoveryCount(),
 		"Sites":          s.Cfg.SitesSnapshot(),
 		"SocksPort":      s.Cfg.BypassCore.SocksPort,
+		"Version":        s.Version,
+		"AutoUpdate":     s.Cfg.SelfUpdateEnabled(),
 		"PendingTOTPQR":  "",
 		"PendingTOTPSet": false,
 	}
@@ -216,5 +221,62 @@ func (s *Server) handleHostSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setFlash(w, "面板寄宿站点已迁移到 "+target+"，请记住新的访问地址")
+	s.redirect(w, r, "/settings")
+}
+
+// handleSelfUpdateCheck queries GitHub for the latest release and reports
+// how it compares to the running version.
+func (s *Server) handleSelfUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	rel, err := selfupdate.Latest(s.Cfg.GeoSnapshot().Mirror)
+	if err != nil {
+		s.setFlash(w, "检查更新失败: "+err.Error())
+		s.redirect(w, r, "/settings")
+		return
+	}
+	if selfupdate.Newer(s.Version, rel.TagName) {
+		s.setFlash(w, fmt.Sprintf("发现新版本 %s（当前 %s），可点击「立即更新」升级", rel.TagName, s.Version))
+	} else {
+		s.setFlash(w, fmt.Sprintf("已是最新版本（当前 %s，最新 %s）", s.Version, rel.TagName))
+	}
+	s.redirect(w, r, "/settings")
+}
+
+// handleSelfUpdate toggles auto-update (action=toggle) or installs the
+// latest release right away (action=apply). A successful install schedules a
+// service restart after the response is sent.
+func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	switch r.FormValue("action") {
+	case "toggle":
+		on := r.FormValue("auto_update") == "on"
+		if err := s.Cfg.Mutate(func(c *config.Config) error {
+			c.AutoUpdate = on
+			return nil
+		}); err != nil {
+			s.setFlash(w, "保存失败: "+err.Error())
+		} else if on {
+			s.setFlash(w, "已开启自动更新：每天检查一次，发现新版本会自动升级并重启面板（面板重启后生效）")
+		} else {
+			s.setFlash(w, "已关闭自动更新（面板重启后生效）")
+		}
+	case "apply":
+		tag, err := selfupdate.Apply(s.Cfg.GeoSnapshot().Mirror)
+		if err != nil {
+			s.setFlash(w, "更新失败: "+err.Error())
+			s.redirect(w, r, "/settings")
+			return
+		}
+		s.setFlash(w, "已更新到 "+tag+"，面板即将重启，请稍候刷新页面")
+		s.redirect(w, r, "/settings")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		go func() {
+			time.Sleep(2 * time.Second)
+			selfupdate.RestartSelf()
+		}()
+		return
+	default:
+		s.setFlash(w, "未知操作")
+	}
 	s.redirect(w, r, "/settings")
 }

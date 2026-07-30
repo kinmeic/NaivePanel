@@ -16,10 +16,10 @@
 </table>
 <form method="post" action="{{.Base}}/geo/update" class="inline-block" data-confirm="现在下载并更新 Geo 数据文件？">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit" class="primary">立即更新</button>
+  <button type="submit" class="primary"><i data-lucide="download"></i>立即更新</button>
 </form>
 
-<h2>更新设置</h2>
+<h2><i data-lucide="settings-2"></i>更新设置</h2>
 <form method="post" action="{{.Base}}/geo/settings">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <label>GitHub 镜像前缀（服务器无法直连 GitHub 时填写，如 https://mirror.ghproxy.com；留空为直连）
@@ -28,6 +28,6 @@
   <label class="check">
     <input type="checkbox" name="auto" {{if .Data.Geo.AutoUpdateWeekly}}checked{{end}}> 每周自动更新（面板重启后生效）
   </label>
-  <button type="submit" class="btn">保存设置</button>
+  <button type="submit" class="btn"><i data-lucide="save"></i>保存设置</button>
 </form>
 {{end}}

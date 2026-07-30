@@ -72,28 +72,6 @@ func (m *Manager) RenderSite(s *sites.Site) (string, error) {
 	return sites.Render(s, panel, s.Domain == m.cfg.GetHostSite(), m.cfg.BypassCore.SocksPort)
 }
 
-// Preview returns a combined, human-readable view of the whole Caddy config.
-func (m *Manager) Preview() (string, error) {
-	files, err := m.RenderAll()
-	if err != nil {
-		return "", err
-	}
-	names := make([]string, 0, len(files))
-	for n := range files {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	// Caddyfile first.
-	sort.SliceStable(names, func(i, j int) bool { return names[i] == "Caddyfile" })
-	var b strings.Builder
-	for _, n := range names {
-		b.WriteString("# ===== " + n + " =====\n\n")
-		b.WriteString(files[n])
-		b.WriteString("\n")
-	}
-	return b.String(), nil
-}
-
 // writeStaging writes rendered files into a fresh staging dir and returns
 // it. The staged main file is rewritten to import the staged sites dir so
 // that validation covers the new snippets, not the live ones.

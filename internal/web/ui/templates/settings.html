@@ -3,14 +3,37 @@
 
 <div class="cards">
   <div class="card">
-    <h3>面板信息</h3>
+    <h3><i data-lucide="info"></i>面板信息</h3>
+    <p>版本：<code>{{.Data.Version}}</code></p>
     <p>访问地址：<code>https://{{.Data.HostSite}}{{.Data.BasePath}}/</code></p>
     <p>内部监听：<code>{{.Data.Listen}}</code></p>
     <p>BypassCore SOCKS5 端口：<code>{{.Data.SocksPort}}</code></p>
   </div>
 
   <div class="card">
-    <h3>修改密码</h3>
+    <h3><i data-lucide="arrow-up-circle"></i>面板更新</h3>
+    <p>当前版本：<code>{{.Data.Version}}</code></p>
+    <div class="actions">
+      <form method="post" action="{{.Base}}/settings/selfupdate/check">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <button type="submit" class="btn"><i data-lucide="refresh-cw"></i>检查更新</button>
+      </form>
+      <form method="post" action="{{.Base}}/settings/selfupdate" data-confirm="将从 GitHub 下载最新版本并替换当前二进制，随后面板自动重启，确定？">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="action" value="apply">
+        <button type="submit" class="primary"><i data-lucide="download"></i>立即更新</button>
+      </form>
+    </div>
+    <form method="post" action="{{.Base}}/settings/selfupdate">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input type="hidden" name="action" value="toggle">
+      <label class="check"><input type="checkbox" name="auto_update" {{if .Data.AutoUpdate}}checked{{end}} onchange="this.form.submit()"> 每天自动检查并安装新版本</label>
+    </form>
+    <p class="muted">更新包经 SHA256SUMS 校验、安装前自检，替换后面板自动重启。GitHub 访问受限时可在 Geo 数据页配置镜像源。</p>
+  </div>
+
+  <div class="card">
+    <h3><i data-lucide="key-round"></i>修改密码</h3>
     <form method="post" action="{{.Base}}/settings/password">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">
       <label>当前密码<input name="current" type="password" required autocomplete="current-password"></label>
@@ -21,7 +44,7 @@
   </div>
 
   <div class="card">
-    <h3>两步验证（TOTP MFA）</h3>
+    <h3><i data-lucide="shield-check"></i>两步验证（TOTP MFA）</h3>
     {{if .Data.TOTPEnabled}}
       <p><span class="ok">已启用</span>，剩余恢复码 {{.Data.RecoveryLeft}} 个</p>
       <form method="post" action="{{.Base}}/settings/totp/disable" data-confirm="确定关闭 MFA？账户安全性将降低。">
@@ -49,7 +72,7 @@
   </div>
 
   <div class="card">
-    <h3>面板寄宿站点</h3>
+    <h3><i data-lucide="home"></i>面板寄宿站点</h3>
     <p>当前：<strong>{{.Data.HostSite}}</strong>（该站点不可删除）</p>
     <form method="post" action="{{.Base}}/settings/hostsite" data-confirm="迁移后面板将通过新站点域名访问，旧域名的面板入口将失效，确定？">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">

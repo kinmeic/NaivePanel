@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/kinmeic/NaivePanel/internal/caddymgr"
 	"github.com/kinmeic/NaivePanel/internal/sites"
 )
 
@@ -116,24 +115,13 @@ type siteRow struct {
 func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 	managed := s.Cfg.SitesSnapshot()
 	rows := make([]siteRow, 0, len(managed))
-	inModel := make(map[string]bool, len(managed))
 	for _, st := range managed {
 		drift, missing := s.Caddy.SiteDrift(st.Domain)
 		rows = append(rows, siteRow{Site: st, Drift: drift, Missing: missing})
-		inModel[st.Domain] = true
-	}
-	// Disk snippets the panel doesn't manage yet (e.g. created by install.sh
-	// or edited by hand) — offer to import them.
-	var unmanaged []caddymgr.DiskSite
-	for _, ds := range s.Caddy.ListDiskSites() {
-		if !inModel[ds.Domain] {
-			unmanaged = append(unmanaged, ds)
-		}
 	}
 	s.render(w, r, "sites", "站点管理", map[string]any{
-		"Rows":      rows,
-		"Unmanaged": unmanaged,
-		"HostSite":  s.Cfg.GetHostSite(),
+		"Rows":     rows,
+		"HostSite": s.Cfg.GetHostSite(),
 	})
 }
 

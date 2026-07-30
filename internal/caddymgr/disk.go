@@ -1,10 +1,7 @@
 package caddymgr
 
 import (
-	"bytes"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -72,19 +69,6 @@ func (m *Manager) LivePreview() string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-// AdaptJSON runs `caddy adapt` on the live config and returns pretty JSON —
-// the exact parsed configuration Caddy would load.
-func (m *Manager) AdaptJSON() (string, error) {
-	cmd := exec.Command(m.cfg.Caddy.Bin, "adapt",
-		"--config", m.cfg.Caddy.MainFile, "--adapter", "caddyfile", "--pretty")
-	var out, errBuf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errBuf
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("caddy adapt 失败: %v\n%s", err, errBuf.String())
-	}
-	return out.String(), nil
 }
 
 // NormalizeSnippet normalizes a snippet for drift comparison: trims every
