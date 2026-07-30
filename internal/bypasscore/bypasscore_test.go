@@ -23,16 +23,43 @@ func TestEnsureSocksInboundEmpty(t *testing.T) {
 	if m["tag"] != "caddy-forward" || m["type"] != "socks" || int(m["port"].(float64)) != 1080 {
 		t.Fatalf("unexpected inbound: %v", m)
 	}
+	obs, _ := root["outbounds"].([]any)
+	if len(obs) != 1 {
+		t.Fatalf("expected 1 default outbound, got %d", len(obs))
+	}
+	ob := obs[0].(map[string]any)
+	if ob["tag"] != "direct" || ob["mode"] != "freedom" {
+		t.Fatalf("unexpected default outbound: %v", ob)
+	}
+	rt, _ := root["routing"].(map[string]any)
+	if rt["finalOutboundTag"] != "direct" {
+		t.Fatalf("routing should default to direct: %v", rt)
+	}
 }
 
 func TestEnsureSocksInboundIdempotent(t *testing.T) {
-	in := `{"inbounds":[{"tag":"caddy-forward","type":"socks","listen":"127.0.0.1","port":1080,"network":"tcp"}]}`
+	in := `{"inbounds":[{"tag":"caddy-forward","type":"socks","listen":"127.0.0.1","port":1080,"network":"tcp"}],"outbounds":[{"tag":"direct","mode":"freedom"}],"routing":{"finalOutboundTag":"direct"}}`
 	_, changed, err := EnsureSocksInbound([]byte(in), 1080)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if changed {
 		t.Fatal("should be idempotent for existing matching inbound")
+	}
+}
+
+// An existing outbound / routing setup is never touched.
+func TestEnsureSocksInboundKeepsOutbounds(t *testing.T) {
+	in := `{"inbounds":[{"tag":"caddy-forward","type":"socks","port":1080}],"outbounds":[{"tag":"caddy-exit","mode":"proxy","upstream":{"server":"exit.example.com:443"}}],"routing":{"finalOutboundTag":"caddy-exit"}}`
+	out, changed, err := EnsureSocksInbound([]byte(in), 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("config with outbounds must not be modified")
+	}
+	if !strings.Contains(string(out), "caddy-exit") {
+		t.Fatalf("existing outbound lost: %s", out)
 	}
 }
 

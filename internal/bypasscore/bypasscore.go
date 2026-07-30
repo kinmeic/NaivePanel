@@ -183,8 +183,10 @@ func (m *Manager) ReadConfig() ([]byte, error) {
 
 // EnsureSocksInbound makes sure the config contains the local SOCKS5 inbound
 // that receives Caddy forward_proxy traffic. An existing caddy-forward entry
-// is updated in place when the port changed (never duplicated). It returns
-// true when the config was changed (caller should ApplyConfig it).
+// is updated in place when the port changed (never duplicated). A config
+// without any outbound gets a default direct one (BypassCore refuses to
+// validate otherwise) routed via routing.finalOutboundTag. It returns true
+// when the config was changed (caller should ApplyConfig it).
 func EnsureSocksInbound(content []byte, port int) ([]byte, bool, error) {
 	var root map[string]any
 	if len(bytes.TrimSpace(content)) == 0 {
@@ -192,30 +194,54 @@ func EnsureSocksInbound(content []byte, port int) ([]byte, bool, error) {
 	} else if err := json.Unmarshal(content, &root); err != nil {
 		return nil, false, fmt.Errorf("解析现有配置: %w", err)
 	}
+	changed := false
 	inbounds, _ := root["inbounds"].([]any)
+	found := false
 	for _, ib := range inbounds {
 		if m, ok := ib.(map[string]any); ok {
 			if m["tag"] == "caddy-forward" && m["type"] == "socks" {
-				if p, ok := m["port"].(float64); ok && int(p) == port {
-					return content, false, nil // already present
+				found = true
+				if p, ok := m["port"].(float64); !ok || int(p) != port {
+					m["port"] = float64(port) // port changed: update in place
+					changed = true
 				}
-				m["port"] = float64(port) // port changed: update in place
-				out, err := json.MarshalIndent(root, "", "  ")
-				if err != nil {
-					return nil, false, err
-				}
-				return out, true, nil
 			}
 		}
 	}
-	inbounds = append(inbounds, map[string]any{
-		"tag":     "caddy-forward",
-		"type":    "socks",
-		"listen":  "127.0.0.1",
-		"port":    float64(port),
-		"network": "tcp",
-	})
-	root["inbounds"] = inbounds
+	if !found {
+		inbounds = append(inbounds, map[string]any{
+			"tag":     "caddy-forward",
+			"type":    "socks",
+			"listen":  "127.0.0.1",
+			"port":    float64(port),
+			"network": "tcp",
+		})
+		root["inbounds"] = inbounds
+		changed = true
+	}
+
+	// BypassCore validation requires at least one outbound; default to a
+	// direct freedom outbound and route everything through it unless the
+	// operator already configured otherwise.
+	if outbounds, _ := root["outbounds"].([]any); len(outbounds) == 0 {
+		root["outbounds"] = []any{map[string]any{
+			"tag":  "direct",
+			"mode": "freedom",
+		}}
+		routing, _ := root["routing"].(map[string]any)
+		if routing == nil {
+			routing = map[string]any{}
+		}
+		if _, ok := routing["finalOutboundTag"]; !ok {
+			routing["finalOutboundTag"] = "direct"
+		}
+		root["routing"] = routing
+		changed = true
+	}
+
+	if !changed {
+		return content, false, nil
+	}
 	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, false, err
