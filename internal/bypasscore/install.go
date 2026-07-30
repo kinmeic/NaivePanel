@@ -159,7 +159,9 @@ func fetchBytes(url string) ([]byte, error) {
 }
 
 // sha256ForAsset extracts the expected hex digest for filename from a
-// coreutils-style SHA256SUMS file.
+// coreutils-style SHA256SUMS file. Entry names may carry a coreutils binary
+// marker ("*name") or a find-style "./" prefix; both are normalized before
+// the exact-name comparison.
 func sha256ForAsset(sums []byte, filename string) (string, error) {
 	for _, line := range strings.Split(string(sums), "\n") {
 		fields := strings.Fields(line)
@@ -167,6 +169,7 @@ func sha256ForAsset(sums []byte, filename string) (string, error) {
 			continue
 		}
 		name := strings.TrimPrefix(fields[1], "*")
+		name = strings.TrimPrefix(name, "./")
 		if name == filename {
 			h := strings.ToLower(fields[0])
 			if len(h) != 64 {

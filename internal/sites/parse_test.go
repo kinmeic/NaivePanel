@@ -153,3 +153,88 @@ func mustTokens(t *testing.T, line string) []string {
 	}
 	return toks
 }
+
+// The shape a real server carries inline in /etc/caddy/Caddyfile: PHP site
+// with forward_proxy upstream and the panel handle block.
+func TestParseServerShape(t *testing.T) {
+	snippet := `:443, hk.example.com {
+	route {
+		forward_proxy {
+			basic_auth u1 p1
+			hide_ip
+			hide_via
+			probe_resistance
+			upstream https://u1:p1@sg2.example.com:443
+		}
+
+		handle /manage-abc/* {
+			reverse_proxy 127.0.0.1:9000 {
+				header_up X-NaivePanel-Key secret
+			}
+		}
+
+		root * /var/www/html
+		encode gzip zstd
+		php_fastcgi unix//run/php/php8.3-fpm.sock
+		file_server
+	}
+}`
+	st, err := Parse(snippet, "/manage-abc", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Web.Type != WebPHP || st.Web.PHPSocket != "unix//run/php/php8.3-fpm.sock" {
+		t.Fatalf("web mismatch: %+v", st.Web)
+	}
+	if !st.ForwardProxy.Enabled || st.ForwardProxy.Upstream != "https://u1:p1@sg2.example.com:443" {
+		t.Fatalf("forward_proxy mismatch: %+v", st.ForwardProxy)
+	}
+	if len(st.ExtraBlocks) != 0 {
+		t.Fatalf("panel handle block must be skipped, got %+v", st.ExtraBlocks)
+	}
+}
+
+// Comments (whole-line and trailing) must not break parsing.
+func TestParseToleratesComments(t *testing.T) {
+	snippet := `# 站点说明
+:443, hk.example.com {
+	route {
+		# 代理解锁
+		forward_proxy {
+			basic_auth u1 p1 # 账号
+			hide_ip
+			hide_via
+			probe_resistance
+			upstream https://u1:p1@sg2.example.com:443
+		}
+
+		root * /var/www/html # 站点目录
+		encode gzip zstd
+		php_fastcgi unix//run/php/php8.3-fpm.sock
+		file_server
+	}
+}`
+	st, err := Parse(snippet, "/manage-abc", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Web.Type != WebPHP || st.Web.Root != "/var/www/html" {
+		t.Fatalf("web mismatch: %+v", st.Web)
+	}
+	if len(st.ForwardProxy.Accounts) != 1 || st.ForwardProxy.Accounts[0].Pass != "p1" {
+		t.Fatalf("accounts mismatch: %+v", st.ForwardProxy.Accounts)
+	}
+}
+
+// '#' inside a quoted token is not a comment.
+func TestStripCommentQuoted(t *testing.T) {
+	if got := stripComment(`basic_auth user "pa#ss"`); got != `basic_auth user "pa#ss"` {
+		t.Fatalf("quoted hash mangled: %q", got)
+	}
+	if got := stripComment("root * /var/www # dir"); got != "root * /var/www" {
+		t.Fatalf("trailing comment not stripped: %q", got)
+	}
+	if got := stripComment("# full line"); got != "" {
+		t.Fatalf("full-line comment not stripped: %q", got)
+	}
+}

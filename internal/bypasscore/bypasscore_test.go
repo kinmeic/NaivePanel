@@ -46,3 +46,20 @@ func TestEnsureSocksInboundAppends(t *testing.T) {
 		t.Fatalf("missing content: %s", out)
 	}
 }
+
+func TestSHA256ForAsset(t *testing.T) {
+	sum := strings.Repeat("ab", 32)
+	sums := []byte(sum + "  ./bypasscore-linux-x86_64.tar.gz\n" +
+		strings.Repeat("cd", 32) + " *bypasscore-linux-arm64.tar.gz\n")
+	got, err := sha256ForAsset(sums, "bypasscore-linux-x86_64.tar.gz")
+	if err != nil || got != sum {
+		t.Fatalf("find-style ./ prefix entry: got %q err %v", got, err)
+	}
+	got, err = sha256ForAsset(sums, "bypasscore-linux-arm64.tar.gz")
+	if err != nil || got != strings.Repeat("cd", 32) {
+		t.Fatalf("binary-marker * entry: got %q err %v", got, err)
+	}
+	if _, err := sha256ForAsset(sums, "bypasscore-darwin-arm64.tar.gz"); err == nil {
+		t.Fatal("missing asset must error")
+	}
+}

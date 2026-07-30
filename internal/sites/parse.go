@@ -114,10 +114,11 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 }
 
 // DomainFromHeader extracts the site address (domain) from a snippet's first
-// non-empty line, e.g. ":443, example.com {" → "example.com".
+// meaningful line, e.g. ":443, example.com {" → "example.com". Comment and
+// blank lines are skipped.
 func DomainFromHeader(snippet string) string {
 	for _, line := range strings.Split(snippet, "\n") {
-		line = strings.TrimSpace(line)
+		line = stripComment(line)
 		if line == "" {
 			continue
 		}
@@ -142,16 +143,36 @@ type snippetParser struct {
 	pos   int
 }
 
-// next returns the next non-empty trimmed line.
+// next returns the next meaningful line: trimmed, with comments removed
+// (both whole-line and trailing "# ..." comments outside quotes).
 func (p *snippetParser) next() (string, bool) {
 	for p.pos < len(p.lines) {
-		line := strings.TrimSpace(p.lines[p.pos])
+		line := stripComment(p.lines[p.pos])
 		p.pos++
 		if line != "" {
 			return line, true
 		}
 	}
 	return "", false
+}
+
+// stripComment trims whitespace and drops a trailing comment: everything
+// after a '#' that starts a new token (at line start or preceded by
+// whitespace) outside double quotes.
+func stripComment(raw string) string {
+	inQuote := false
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		switch {
+		case ch == '\\' && inQuote:
+			i++
+		case ch == '"':
+			inQuote = !inQuote
+		case ch == '#' && !inQuote && (i == 0 || raw[i-1] == ' ' || raw[i-1] == '\t'):
+			return strings.TrimSpace(raw[:i])
+		}
+	}
+	return strings.TrimSpace(raw)
 }
 
 // skipBlock consumes lines until the block opened by the previous line

@@ -107,9 +107,10 @@ func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
 
 // siteRow pairs a disk-parsed site with its source file name.
 type siteRow struct {
-	Site     sites.Site
-	FileName string
-	Inline   bool // block lives inside the main Caddyfile (not yet migrated)
+	Site      sites.Site
+	FileName  string
+	Inline    bool   // block lives inside the main Caddyfile (not yet migrated)
+	ParseNote string // why a raw-mode row doesn't match the panel's shape
 }
 
 // handleSiteList is the async fragment behind the Caddy page's sites tab:
@@ -119,11 +120,11 @@ type siteRow struct {
 func (s *Server) handleSiteList(w http.ResponseWriter, r *http.Request) {
 	var rows []siteRow
 	for _, ds := range s.Caddy.ListDiskSites() {
-		st, _, err := s.importSiteFromDisk(ds.Content)
+		st, _, note, err := s.importSiteFromDisk(ds.Content)
 		if err != nil {
 			continue
 		}
-		rows = append(rows, siteRow{Site: *st, FileName: ds.FileName, Inline: ds.Inline})
+		rows = append(rows, siteRow{Site: *st, FileName: ds.FileName, Inline: ds.Inline, ParseNote: note})
 	}
 	s.renderFrag(w, r, "sites_list", map[string]any{
 		"Rows":     rows,
@@ -173,7 +174,7 @@ func (s *Server) handleSiteEdit(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/caddy/sites")
 		return
 	}
-	st, _, err := s.importSiteFromDisk(ds.Content)
+	st, _, _, err := s.importSiteFromDisk(ds.Content)
 	if err != nil {
 		s.setFlash(w, "解析磁盘配置失败: "+err.Error())
 		s.redirect(w, r, "/caddy/sites")
@@ -227,7 +228,7 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 			s.redirect(w, r, "/caddy/sites")
 			return
 		}
-		parsed, _, err := s.importSiteFromDisk(ds.Content)
+		parsed, _, _, err := s.importSiteFromDisk(ds.Content)
 		if err != nil {
 			s.setFlash(w, "解析磁盘配置失败: "+err.Error())
 			s.redirect(w, r, "/caddy/sites")
