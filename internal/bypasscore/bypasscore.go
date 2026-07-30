@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,11 +21,15 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/config"
 )
 
+var semanticVersionPattern = regexp.MustCompile(`(?i)(?:^|[^0-9])v?([0-9]+\.[0-9]+\.[0-9]+)(?:[^0-9]|$)`)
+
 // Manager handles one BypassCore installation.
 type Manager struct {
-	cfg    *config.Config
-	client *http.Client
-	mu     sync.Mutex
+	cfg            *config.Config
+	client         *http.Client
+	serviceActive  func() bool
+	restartService func() error
+	mu             sync.Mutex
 }
 
 // New creates a Manager bound to the panel config.
@@ -37,8 +42,10 @@ func New(cfg *config.Config) *Manager {
 		},
 	}
 	return &Manager{
-		cfg:    cfg,
-		client: &http.Client{Transport: tr, Timeout: 10 * time.Second},
+		cfg:            cfg,
+		client:         &http.Client{Transport: tr, Timeout: 10 * time.Second},
+		serviceActive:  serviceActive,
+		restartService: restartService,
 	}
 }
 
@@ -55,6 +62,16 @@ func (m *Manager) Version() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// VersionTag returns only the human-facing semantic version from the binary's
+// verbose version output (for example "v0.3.9").
+func (m *Manager) VersionTag() string {
+	match := semanticVersionPattern.FindStringSubmatch(m.Version())
+	if len(match) != 2 {
+		return ""
+	}
+	return "v" + match[1]
 }
 
 // ControlGet fetches a control-plane endpoint and returns the raw body.
@@ -117,62 +134,86 @@ func (m *Manager) checkConfig(path string) error {
 	return nil
 }
 
-// ApplyConfig runs the full config-change pipeline for BypassCore:
-// validate → backup → write → hot reload (restart when required) → probe.
+// ApplyMode tells callers how a successfully saved configuration takes effect.
+type ApplyMode string
+
+const (
+	ApplySavedOnly   ApplyMode = "saved"
+	ApplyHotReloaded ApplyMode = "hot_reload"
+	ApplyRestarted   ApplyMode = "restart"
+)
+
+// ApplyResult describes the successful end of the configuration pipeline.
+type ApplyResult struct {
+	Mode ApplyMode
+}
+
+// ApplyConfig keeps the original error-only API for background/internal
+// callers that do not need to present the activation method to a user.
 func (m *Manager) ApplyConfig(content []byte) error {
+	_, err := m.ApplyConfigWithResult(content)
+	return err
+}
+
+// ApplyConfigWithResult runs the full config-change pipeline for BypassCore:
+// validate → backup → write → hot reload (restart when required) → probe. Its
+// result lets the UI distinguish a true hot reload from an automatic restart.
+func (m *Manager) ApplyConfigWithResult(content []byte) (ApplyResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !json.Valid(content) {
-		return fmt.Errorf("不是合法的 JSON")
+		return ApplyResult{}, fmt.Errorf("不是合法的 JSON")
 	}
 	// Stage & validate.
 	tmp, err := os.CreateTemp("", "bypasscore-config-*.json")
 	if err != nil {
-		return err
+		return ApplyResult{}, err
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(content); err != nil {
 		tmp.Close()
-		return err
+		return ApplyResult{}, err
 	}
 	tmp.Close()
 	if err := m.checkConfig(tmp.Name()); err != nil {
-		return err
+		return ApplyResult{}, err
 	}
 	// Backup current and remember it for transactional rollback.
 	live := m.cfg.BypassCore.ConfigPath
 	old, oldErr := os.ReadFile(live)
 	oldExists := oldErr == nil
 	if oldErr != nil && !os.IsNotExist(oldErr) {
-		return fmt.Errorf("读取当前配置失败: %w", oldErr)
+		return ApplyResult{}, fmt.Errorf("读取当前配置失败: %w", oldErr)
 	}
 	stamp := time.Now().Format("20060102-150405.000000000")
 	backupDir := filepath.Join(m.cfg.BackupDir, "bypasscore")
 	if err := os.MkdirAll(backupDir, 0700); err != nil {
-		return err
+		return ApplyResult{}, err
 	}
 	if oldExists {
 		if err := os.WriteFile(filepath.Join(backupDir, "config-"+stamp+".json"), old, 0600); err != nil {
-			return err
+			return ApplyResult{}, err
 		}
 	}
 	// Write live atomically so a crash cannot leave truncated JSON.
 	if err := writeFileAtomic(live, content, 0600); err != nil {
-		return err
+		return ApplyResult{}, err
 	}
 
 	// Saving configuration must not unexpectedly start a stopped service.
-	if !serviceActive() {
-		return nil
+	if !m.serviceActive() {
+		return ApplyResult{Mode: ApplySavedOnly}, nil
 	}
 
 	var applyErr error
+	mode := ApplyHotReloaded
 	// Hot reload through the control plane when available.
 	if st, statErr := os.Stat(m.cfg.BypassCore.ControlSock); statErr == nil && st.Mode()&os.ModeSocket != 0 {
 		if out, err := m.controlPost("/v1/config/reload", content); err != nil {
 			if strings.Contains(string(out), "restart_required") || strings.Contains(err.Error(), "restart_required") {
-				applyErr = restartService()
+				mode = ApplyRestarted
+				applyErr = m.restartService()
 			} else {
 				applyErr = fmt.Errorf("热重载失败: %w", err)
 			}
@@ -180,7 +221,8 @@ func (m *Manager) ApplyConfig(content []byte) error {
 			_, applyErr = m.Ready()
 		}
 	} else {
-		applyErr = restartService()
+		mode = ApplyRestarted
+		applyErr = m.restartService()
 	}
 	if applyErr == nil {
 		if state, err := InspectControlConfig(content); err == nil &&
@@ -189,7 +231,7 @@ func (m *Manager) ApplyConfig(content []byte) error {
 		}
 	}
 	if applyErr == nil {
-		return nil
+		return ApplyResult{Mode: mode}, nil
 	}
 
 	// Restore both disk and runtime to the previously working revision.
@@ -203,12 +245,12 @@ func (m *Manager) ApplyConfig(content []byte) error {
 		}
 	}
 	if rollbackErr == nil {
-		rollbackErr = restartService()
+		rollbackErr = m.restartService()
 	}
 	if rollbackErr != nil {
-		return fmt.Errorf("应用配置失败: %v；回滚也失败: %v", applyErr, rollbackErr)
+		return ApplyResult{}, fmt.Errorf("应用配置失败: %v；回滚也失败: %v", applyErr, rollbackErr)
 	}
-	return fmt.Errorf("应用配置失败，已回滚到原配置: %w", applyErr)
+	return ApplyResult{}, fmt.Errorf("应用配置失败，已回滚到原配置: %w", applyErr)
 }
 
 func (m *Manager) waitReady(timeout time.Duration) error {

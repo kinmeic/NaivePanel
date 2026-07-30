@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>设置</h1>
+<h1>应用管理</h1>
 
 <div class="cards">
   <div class="card">
@@ -27,72 +27,26 @@
   <div class="card">
     <h3>{{icon "package"}}BypassCore 信息</h3>
     {{if .Data.Bypass.Installed}}
-      <p><span class="ok">已安装</span>{{if .Data.Bypass.Version}}<span class="service-version mono">{{.Data.Bypass.Version}}</span>{{end}}</p>
+      <p>版本：{{if .Data.Bypass.Version}}<code>{{.Data.Bypass.Version}}</code>{{else}}<span class="muted">未知</span>{{end}}</p>
+      <div class="actions">
+        <form method="post" action="{{.Base}}/bypasscore/update/check">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <button type="submit" class="btn">{{icon "refresh-cw"}}检查更新</button>
+        </form>
+        <form method="post" action="{{.Base}}/bypasscore/install" data-confirm="将下载并校验最新 BypassCore release，安装后自动重启服务，确定？">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <button type="submit" class="primary">{{icon "download"}}立即更新</button>
+        </form>
+      </div>
     {{else}}
       <p><span class="warn">未安装</span></p>
+      <form method="post" action="{{.Base}}/bypasscore/install" class="inline" data-confirm="将从 GitHub 下载最新 release 并安装，继续？">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <button type="submit" class="primary">{{icon "download"}}安装 BypassCore</button>
+      </form>
     {{end}}
     <p>程序：<code class="path-code">{{.Data.Bypass.BinPath}}</code></p>
     <p>配置：<code class="path-code">{{.Data.Bypass.ConfigPath}}</code></p>
-    <p>SOCKS5 端口：<code>{{.Data.Bypass.SocksPort}}</code></p>
-    <form method="post" action="{{.Base}}/bypasscore/install" class="inline" data-confirm="将从 GitHub 下载最新 release 并安装/更新，继续？">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <button type="submit" class="primary">{{icon "download"}}{{if .Data.Bypass.Installed}}更新到最新版{{else}}安装 BypassCore{{end}}</button>
-    </form>
-  </div>
-
-  <div class="card">
-    <h3>{{icon "key-round"}}修改密码</h3>
-    <form method="post" action="{{.Base}}/settings/password">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>当前密码<input name="current" type="password" required autocomplete="current-password"></label>
-      <label>新密码（至少 10 位）<input name="new1" type="password" required autocomplete="new-password"></label>
-      <label>确认新密码<input name="new2" type="password" required autocomplete="new-password"></label>
-      <button type="submit" class="primary">修改密码</button>
-    </form>
-  </div>
-
-  <div class="card">
-    <h3>{{icon "shield-check"}}两步验证（TOTP MFA）</h3>
-    {{if .Data.TOTPEnabled}}
-      <p><span class="ok">已启用</span>，剩余恢复码 {{.Data.RecoveryLeft}} 个</p>
-      <form method="post" action="{{.Base}}/settings/totp/disable" data-confirm="确定关闭 MFA？账户安全性将降低。">
-        <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <label>密码<input name="password" type="password" required></label>
-        <label>当前 TOTP 验证码<input name="code" inputmode="numeric" required></label>
-        <button type="submit" class="danger">关闭 MFA</button>
-      </form>
-    {{else if .Data.PendingTOTPSet}}
-      <p>用认证器（如 Google Authenticator / 1Password）扫描下方二维码，或手动输入密钥：</p>
-      <p><img src="{{.Data.PendingTOTPQR}}" alt="TOTP QR" width="240" height="240"></p>
-      <p>密钥：<code>{{.Data.PendingTOTPSecret}}</code></p>
-      <form method="post" action="{{.Base}}/settings/totp/confirm">
-        <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <label>输入 6 位验证码确认启用<input name="code" inputmode="numeric" required></label>
-        <button type="submit" class="primary">确认启用 MFA</button>
-      </form>
-    {{else}}
-      <p class="warn">未启用。强烈建议开启以提升面板安全性。</p>
-      <form method="post" action="{{.Base}}/settings/totp/setup">
-        <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <button type="submit" class="primary">开始设置 MFA</button>
-      </form>
-    {{end}}
-  </div>
-
-  <div class="card">
-    <h3>{{icon "home"}}面板寄宿站点</h3>
-    <p>当前：<strong>{{.Data.HostSite}}</strong>（该站点不可删除）</p>
-    <form method="post" action="{{.Base}}/settings/hostsite" data-confirm="迁移后面板将通过新站点域名访问，旧域名的面板入口将失效，确定？">
-      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-      <label>迁移到
-        <select name="host_site">
-          {{range .Data.Sites}}
-          <option value="{{.Domain}}" {{if eq .Domain $.Data.HostSite}}selected{{end}}>{{.Domain}}</option>
-          {{end}}
-        </select>
-      </label>
-      <button type="submit" class="btn">迁移</button>
-    </form>
   </div>
 </div>
 {{end}}

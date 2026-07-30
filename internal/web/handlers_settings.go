@@ -9,35 +9,40 @@ import (
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
+	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/selfupdate"
 	"github.com/pquerna/otp"
 )
 
-// handleSettings shows the settings page.
+// handleSettings shows application installation and update management.
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	totpOn, _ := s.Cfg.TOTPState()
 	bypassInstalled := s.Bypass.Installed()
 	bypassVersion := ""
 	if bypassInstalled {
-		bypassVersion = s.Bypass.Version()
+		bypassVersion = s.Bypass.VersionTag()
 	}
 	data := map[string]any{
-		"HostSite":       s.Cfg.GetHostSite(),
-		"TOTPEnabled":    totpOn,
-		"RecoveryLeft":   s.Cfg.RecoveryCount(),
-		"Sites":          s.Cfg.SitesSnapshot(),
-		"Version":        s.Version,
-		"AutoUpdate":     s.Cfg.SelfUpdateEnabled(),
-		"PendingTOTPQR":  "",
-		"PendingTOTPSet": false,
+		"Version":    s.Version,
+		"AutoUpdate": s.Cfg.SelfUpdateEnabled(),
 		"Bypass": map[string]any{
 			"Installed":  bypassInstalled,
 			"Version":    bypassVersion,
 			"BinPath":    s.Cfg.BypassCore.BinPath,
 			"ConfigPath": s.Cfg.BypassCore.ConfigPath,
-			"SocksPort":  s.Cfg.BypassCore.SocksPort,
 		},
+	}
+	s.render(w, r, "settings", "应用管理", data)
+}
+
+// handleSecurity shows password and MFA controls.
+func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
+	totpOn, _ := s.Cfg.TOTPState()
+	data := map[string]any{
+		"TOTPEnabled":    totpOn,
+		"RecoveryLeft":   s.Cfg.RecoveryCount(),
+		"PendingTOTPQR":  "",
+		"PendingTOTPSet": false,
 	}
 	if sess := s.session(r); sess != nil {
 		if secret, otpauthURL := sess.PendingTOTP(); secret != "" {
@@ -49,7 +54,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.render(w, r, "settings", "设置", data)
+	s.render(w, r, "security", "账号安全", data)
 }
 
 // totpQR renders the otpauth URL as a PNG data URI.
@@ -76,23 +81,23 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 	new2 := r.FormValue("new2")
 	if !auth.VerifyPassword(cur, s.Cfg.GetAdminPassHash()) {
 		s.setFlash(w, "当前密码错误")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	if len(new1) < 10 {
 		s.setFlash(w, "新密码长度至少 10 位")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	if new1 != new2 {
 		s.setFlash(w, "两次输入的新密码不一致")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	h, err := auth.HashPassword(new1)
 	if err != nil {
 		s.setFlash(w, "密码哈希失败")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	err = s.Cfg.Mutate(func(c *config.Config) error {
@@ -106,7 +111,7 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 		s.Sessions.DestroyAll(auth.TokenFromRequest(r))
 		s.setFlash(w, "密码已修改，其他登录会话已失效")
 	}
-	s.redirect(w, r, "/settings")
+	s.redirect(w, r, "/security")
 }
 
 // handleTOTPSetup starts MFA enrollment: generates a secret kept in the
@@ -114,13 +119,13 @@ func (s *Server) handlePasswordChange(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	if totpOn, _ := s.Cfg.TOTPState(); totpOn {
 		s.setFlash(w, "MFA 已启用，如需重置请先关闭")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	secret, otpauthURL, err := auth.GenerateTOTP("NaivePanel", s.Cfg.AdminUser)
 	if err != nil {
 		s.setFlash(w, "生成 TOTP 密钥失败")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	sess := s.session(r)
@@ -129,7 +134,7 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.SetPendingTOTP(secret, otpauthURL)
-	s.redirect(w, r, "/settings")
+	s.redirect(w, r, "/security")
 }
 
 // handleTOTPConfirm verifies the first code and enables MFA, issuing
@@ -137,24 +142,24 @@ func (s *Server) handleTOTPSetup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	sess := s.session(r)
 	if sess == nil {
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	secret, _ := sess.PendingTOTP()
 	if secret == "" {
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	code := r.FormValue("code")
 	if !auth.VerifyTOTP(secret, code) {
 		s.setFlash(w, "验证码错误，请重试")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	codes, hashes, err := auth.GenerateRecoveryCodes(10)
 	if err != nil {
 		s.setFlash(w, "生成恢复码失败")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	err = s.Cfg.Mutate(func(c *config.Config) error {
@@ -165,7 +170,7 @@ func (s *Server) handleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	sess.ClearPendingTOTP()
@@ -176,13 +181,13 @@ func (s *Server) handleTOTPConfirm(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 	if !auth.VerifyPassword(r.FormValue("password"), s.Cfg.GetAdminPassHash()) {
 		s.setFlash(w, "密码错误")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	_, secret := s.Cfg.TOTPState()
 	if !auth.VerifyTOTP(secret, r.FormValue("code")) {
 		s.setFlash(w, "TOTP 验证码错误")
-		s.redirect(w, r, "/settings")
+		s.redirect(w, r, "/security")
 		return
 	}
 	err := s.Cfg.Mutate(func(c *config.Config) error {
@@ -198,40 +203,7 @@ func (s *Server) handleTOTPDisable(w http.ResponseWriter, r *http.Request) {
 		s.Sessions.DestroyAll(auth.TokenFromRequest(r))
 		s.setFlash(w, "MFA 已关闭")
 	}
-	s.redirect(w, r, "/settings")
-}
-
-// handleHostSite migrates panel hosting to another site.
-func (s *Server) handleHostSite(w http.ResponseWriter, r *http.Request) {
-	target := r.FormValue("host_site")
-	s.caddyMu.Lock()
-	defer s.caddyMu.Unlock()
-	if s.Cfg.FindSite(target) < 0 {
-		s.setFlash(w, "目标站点不存在")
-		s.redirect(w, r, "/settings")
-		return
-	}
-	old := s.Cfg.GetHostSite()
-	err := s.Cfg.Mutate(func(c *config.Config) error {
-		c.HostSite = target
-		return nil
-	})
-	if err != nil {
-		s.setFlash(w, "保存失败: "+err.Error())
-		s.redirect(w, r, "/settings")
-		return
-	}
-	if err := s.Caddy.Apply(); err != nil {
-		_ = s.Cfg.Mutate(func(c *config.Config) error {
-			c.HostSite = old
-			return nil
-		})
-		s.setFlash(w, "迁移失败已回滚: "+err.Error())
-		s.redirect(w, r, "/settings")
-		return
-	}
-	s.setFlash(w, "面板寄宿站点已迁移到 "+target+"，请记住新的访问地址")
-	s.redirect(w, r, "/settings")
+	s.redirect(w, r, "/security")
 }
 
 // handleSelfUpdateCheck queries GitHub for the latest release and reports
@@ -247,6 +219,31 @@ func (s *Server) handleSelfUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		s.setFlash(w, fmt.Sprintf("发现新版本 %s（当前 %s），可点击「立即更新」升级", rel.TagName, s.Version))
 	} else {
 		s.setFlash(w, fmt.Sprintf("已是最新版本（当前 %s，最新 %s）", s.Version, rel.TagName))
+	}
+	s.redirect(w, r, "/settings")
+}
+
+// handleBypassUpdateCheck compares the installed BypassCore version with the
+// latest published release without changing the installed binary.
+func (s *Server) handleBypassUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if !s.Bypass.Installed() {
+		s.setFlash(w, "BypassCore 尚未安装")
+		s.redirect(w, r, "/settings")
+		return
+	}
+	rel, err := bypasscore.LatestRelease(s.Cfg.GeoSnapshot().Mirror)
+	if err != nil {
+		s.setFlash(w, "检查 BypassCore 更新失败: "+err.Error())
+		s.redirect(w, r, "/settings")
+		return
+	}
+	current := s.Bypass.VersionTag()
+	if current == "" {
+		s.setFlash(w, fmt.Sprintf("最新 BypassCore 版本为 %s；当前版本号无法识别", rel.TagName))
+	} else if selfupdate.Newer(current, rel.TagName) {
+		s.setFlash(w, fmt.Sprintf("发现 BypassCore 新版本 %s（当前 %s），可点击「立即更新」升级", rel.TagName, current))
+	} else {
+		s.setFlash(w, fmt.Sprintf("BypassCore 已是最新版本（当前 %s，最新 %s）", current, rel.TagName))
 	}
 	s.redirect(w, r, "/settings")
 }

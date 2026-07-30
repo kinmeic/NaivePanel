@@ -16,7 +16,11 @@
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <button name="action" value="start" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "play"}}启动</button>
         <button name="action" value="stop" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "square"}}停止</button>
-        <button name="action" value="restart" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "rotate-cw"}}重启</button>
+        <button name="action" value="restart" class="btn"
+                data-async-restart data-service-label="BypassCore"
+                data-progress-target="bypass-restart-progress"
+                data-return-url="{{.Base}}/bypasscore"
+                {{if not .Data.Installed}}disabled{{end}}>{{icon "rotate-cw"}}重启</button>
       </form>
       <form method="post" action="{{.Base}}/bypasscore/service">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -27,17 +31,99 @@
         {{end}}
       </form>
       <a class="btn" href="{{.Base}}/bypasscore/config">{{icon "pencil"}}编辑配置</a>
-      <a class="btn" href="{{.Base}}/logs?service=bypasscore">{{icon "scroll-text"}}查看日志</a>
+    </div>
+    <div id="bypass-restart-progress" class="operation-progress hidden" role="status" aria-live="polite">
+      <div class="operation-progress-head">
+        <span class="spinner" aria-hidden="true"></span>
+        <strong data-operation-title>准备重启 BypassCore</strong>
+      </div>
+      <div class="operation-progress-track"><span data-operation-bar></span></div>
+      <p data-operation-message>正在提交请求…</p>
     </div>
     <p class="muted">本机 SOCKS5 入站端口：<code>{{.Data.SocksPort}}</code>（Caddy 使用 BypassCore 分流时指向该端口）</p>
   </div>
 </div>
 
-<h2>{{icon "activity"}}运行状态（控制面 /v1/status）</h2>
-{{if .Data.Status}}
-<pre class="preview">{{prettyJSON .Data.Status}}</pre>
-{{else if .Data.StatusRaw}}
-<pre class="preview">{{.Data.StatusRaw}}</pre>
+<h2>{{icon "activity"}}运行状态</h2>
+{{if .Data.StatusView}}
+<div class="cards runtime-summary">
+  <div class="card compact-card">
+    <span class="muted">整体状态</span>
+    <strong class="runtime-value {{.Data.StatusView.HealthClass}}">{{.Data.StatusView.HealthLabel}}</strong>
+  </div>
+  <div class="card compact-card">
+    <span class="muted">连续运行</span>
+    <strong class="runtime-value">{{.Data.StatusView.Uptime}}</strong>
+    <small class="muted">启动于 {{.Data.StatusView.StartedAt}}</small>
+  </div>
+  <div class="card compact-card">
+    <span class="muted">当前配置</span>
+    <strong class="runtime-value">{{.Data.StatusView.ConfigRevision}}</strong>
+    <small class="muted">标识 {{.Data.StatusView.ConfigHash}}</small>
+  </div>
+  <div class="card compact-card">
+    <span class="muted">Geo 数据</span>
+    <strong class="runtime-value {{.Data.StatusView.GeodataClass}}">{{.Data.StatusView.GeodataLabel}}</strong>
+    <small class="muted">DNS 上游 {{.Data.StatusView.DNSUpstreamCount}} 个</small>
+  </div>
+</div>
+
+<div class="runtime-section">
+  <h3>入站监听</h3>
+  {{if .Data.StatusView.Inbounds}}
+  <div class="table-scroll">
+    <table class="runtime-table">
+      <thead><tr><th>名称</th><th>用途</th><th>监听地址</th><th>状态</th></tr></thead>
+      <tbody>
+      {{range .Data.StatusView.Inbounds}}
+        <tr>
+          <td><code>{{.Tag}}</code></td>
+          <td>{{.Description}}</td>
+          <td><code>{{.Listen}}</code></td>
+          <td><span class="{{.StateClass}}">{{.State}}</span>{{if .LastError}}<small class="runtime-error">{{.LastError}}</small>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="notice">当前配置没有入站监听。</div>
+  {{end}}
+</div>
+
+<div class="runtime-section">
+  <h3>出站连接</h3>
+  {{if .Data.StatusView.Outbounds}}
+  <div class="table-scroll">
+    <table class="runtime-table">
+      <thead><tr><th>名称</th><th>状态</th><th>最近成功</th><th>最近失败</th></tr></thead>
+      <tbody>
+      {{range .Data.StatusView.Outbounds}}
+        <tr>
+          <td><code>{{.Tag}}</code></td>
+          <td><span class="{{.StateClass}}">{{.State}}</span>{{if .LastError}}<small class="runtime-error">{{.LastError}}</small>{{end}}</td>
+          <td>{{.LastSuccess}}</td>
+          <td>{{.LastFailure}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="notice">当前配置没有出站。</div>
+  {{end}}
+</div>
+
+<p class="runtime-reload {{.Data.StatusView.LastReloadClass}}">
+  {{.Data.StatusView.LastReload}}
+  {{if .Data.StatusView.LastReloadError}}：{{.Data.StatusView.LastReloadError}}{{end}}
+</p>
+{{if .Data.StatusRaw}}
+<details class="technical-details">
+  <summary>查看原始状态（排障用）</summary>
+  <pre class="preview">{{prettyJSON .Data.StatusRaw}}</pre>
+</details>
+{{end}}
 {{else if .Data.StatusInfo}}
 <div class="notice">{{.Data.StatusInfo}}</div>
 {{else if .Data.StatusWarning}}
@@ -51,7 +137,26 @@
   </form>
   {{end}}
 </div>
+{{if .Data.StatusRaw}}
+<details class="technical-details">
+  <summary>查看控制面原始响应</summary>
+  <pre class="preview">{{prettyJSON .Data.StatusRaw}}</pre>
+</details>
+{{end}}
 {{else}}
 <div class="error">{{.Data.StatusError}}</div>
 {{end}}
+
+<h2>{{icon "scroll-text"}}BypassCore 日志</h2>
+<p class="muted">来自 systemd journal 的 BypassCore 运行日志（最新在最后）。</p>
+<div class="logbar">
+  <span class="muted">行数：</span>
+  <a class="btn {{if eq .Data.LogLines 100}}active{{end}}" href="{{.Base}}/bypasscore?lines=100">100</a>
+  <a class="btn {{if eq .Data.LogLines 200}}active{{end}}" href="{{.Base}}/bypasscore?lines=200">200</a>
+  <a class="btn {{if eq .Data.LogLines 500}}active{{end}}" href="{{.Base}}/bypasscore?lines=500">500</a>
+  <a class="btn {{if eq .Data.LogLines 1000}}active{{end}}" href="{{.Base}}/bypasscore?lines=1000">1000</a>
+  <a class="btn" href="{{.Base}}/bypasscore?lines={{.Data.LogLines}}">{{icon "refresh-cw"}}刷新</a>
+</div>
+{{if .Data.LogError}}<div class="error">{{.Data.LogError}}</div>{{end}}
+{{if .Data.LogContent}}<pre class="preview logs">{{.Data.LogContent}}</pre>{{end}}
 {{end}}

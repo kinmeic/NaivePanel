@@ -22,6 +22,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/cronmgr"
 	"github.com/kinmeic/NaivePanel/internal/sites"
+	"github.com/kinmeic/NaivePanel/internal/sysd"
 	"github.com/kinmeic/NaivePanel/internal/systemstats"
 )
 
@@ -45,6 +46,16 @@ type Server struct {
 	// caddyMu keeps model mutations and the corresponding validate/apply/
 	// rollback pipeline as one transaction across concurrent admin requests.
 	caddyMu sync.Mutex
+
+	// serviceOps tracks asynchronous restarts. Caddy carries the panel's own
+	// HTTP connection, so its restart must begin only after the response has
+	// reached the browser. Keeping the operation server-side also lets repeated
+	// clicks attach to the same restart instead of issuing another one.
+	serviceOpsMu     sync.Mutex
+	serviceOps       map[string]*serviceOperation
+	activeServiceOps map[string]string
+	serviceAction    func(string, string) error
+	serviceActive    func(string) bool
 }
 
 // pageData is the common template payload.
@@ -64,15 +75,19 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		return nil, fmt.Errorf("初始化计划任务: %w", err)
 	}
 	s := &Server{
-		Cfg:      cfg,
-		Caddy:    caddymgr.New(cfg),
-		Bypass:   bypasscore.New(cfg),
-		Cron:     cron,
-		Stats:    systemstats.New(),
-		Sessions: auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
-		Limiter:  auth.NewLimiter(5, 15*time.Minute),
-		Version:  version,
-		pages:    map[string]*template.Template{},
+		Cfg:              cfg,
+		Caddy:            caddymgr.New(cfg),
+		Bypass:           bypasscore.New(cfg),
+		Cron:             cron,
+		Stats:            systemstats.New(),
+		Sessions:         auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
+		Limiter:          auth.NewLimiter(5, 15*time.Minute),
+		Version:          version,
+		pages:            map[string]*template.Template{},
+		serviceOps:       map[string]*serviceOperation{},
+		activeServiceOps: map[string]string{},
+		serviceAction:    sysd.Action,
+		serviceActive:    sysd.IsActive,
 	}
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
@@ -173,10 +188,12 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET "+bp+"/bypasscore", s.protect(s.handleBypass))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/install", s.protect(s.handleBypassInstall))
+	s.mux.HandleFunc("POST "+bp+"/bypasscore/update/check", s.protect(s.handleBypassUpdateCheck))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/control/enable", s.protect(s.handleBypassControlEnable))
 	s.mux.HandleFunc("GET "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigGET))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
+	s.mux.HandleFunc("GET "+bp+"/service-operations/{id}", s.protect(s.handleServiceOperation))
 
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
 	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
@@ -184,11 +201,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleGeoSettings))
 
 	s.mux.HandleFunc("GET "+bp+"/settings", s.protect(s.handleSettings))
+	s.mux.HandleFunc("GET "+bp+"/security", s.protect(s.handleSecurity))
+	s.mux.HandleFunc("POST "+bp+"/security/password", s.protect(s.handlePasswordChange))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/setup", s.protect(s.handleTOTPSetup))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/confirm", s.protect(s.handleTOTPConfirm))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/disable", s.protect(s.handleTOTPDisable))
+	// Keep the former POST paths working for one release so an already-open
+	// page cannot fail after an in-place panel update.
 	s.mux.HandleFunc("POST "+bp+"/settings/password", s.protect(s.handlePasswordChange))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/setup", s.protect(s.handleTOTPSetup))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/confirm", s.protect(s.handleTOTPConfirm))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/disable", s.protect(s.handleTOTPDisable))
-	s.mux.HandleFunc("POST "+bp+"/settings/hostsite", s.protect(s.handleHostSite))
 	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate", s.protect(s.handleSelfUpdate))
 	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate/check", s.protect(s.handleSelfUpdateCheck))
 }

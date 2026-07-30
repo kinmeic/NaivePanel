@@ -1,7 +1,7 @@
 {{define "content"}}
 <h1>BypassCore 配置编辑</h1>
 {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
-<p class="muted">保存时将执行：JSON 校验 → bypasscore -check-config → 备份 → 落盘 → 控制面热重载（必要时重启服务）。</p>
+<p class="muted">保存时将执行：JSON 校验 → bypasscore -check-config → 备份 → 落盘 → 控制面热重载。支持热重载的修改无需手动重启；只有监听器等无法热更新的变更才会由面板自动重启服务。</p>
 <form method="post" action="{{.Base}}/bypasscore/config" id="bypass-json-form">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <div id="json-format-error" class="error hidden"></div>

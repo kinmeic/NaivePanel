@@ -28,7 +28,10 @@ button svg.lucide, .btn svg.lucide { margin-right: 5px; }
   display: flex; gap: 10px; align-items: center; padding: 6px 10px 18px;
   font-weight: 700; font-size: 16px; color: var(--text);
 }
-.sidebar .brand svg.lucide { width: 20px; height: 20px; color: var(--accent); }
+.sidebar .brand-logo {
+  width: 28px; height: 28px; flex: 0 0 28px;
+  border-radius: 7px; object-fit: cover;
+}
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .sidebar nav a {
   display: flex; gap: 10px; align-items: center; padding: 8px 10px;
@@ -62,23 +65,131 @@ button svg.lucide, .btn svg.lucide { margin-right: 5px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
 .card h3 { margin-top: 0; font-size: 15px; }
-.system-head { margin-top: 24px; }
-.system-head h2 { margin: 0; }
-.system-head p { margin: 2px 0 0; }
-.system-cards { grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); }
-.metric-card { min-width: 0; }
-.metric-value { margin: 10px 0 5px; font-size: 28px; font-weight: 700; line-height: 1.2; }
+.overview-title {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 16px;
+}
+.overview-title h1 { margin: 0; }
+.overview-grid {
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 16px; align-items: start;
+}
+.overview-column { display: grid; min-width: 0; gap: 16px; }
+.overview-card { min-width: 0; }
+.overview-card h2 { margin: 0 0 14px; font-size: 16px; }
+.overview-status-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
+}
+.overview-metric {
+  min-width: 0; padding: 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg);
+}
+.overview-metric-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.overview-metric-head > span { color: var(--muted); white-space: nowrap; }
+.overview-metric-head strong { font-size: 18px; overflow-wrap: anywhere; }
+.overview-metric p { min-height: 44px; margin: 8px 0 0; font-size: 12px; line-height: 1.45; }
 .metric-track { height: 7px; margin: 8px 0 12px; overflow: hidden; border-radius: 20px; background: var(--bg); }
 .metric-track span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .35s ease; }
-.metric-pairs { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; }
-.metric-pairs span { min-width: 0; color: var(--muted); }
-.metric-pairs strong { display: block; color: var(--text); overflow-wrap: anywhere; }
-.network-rates strong { margin-top: 4px; font-size: 17px; }
+.overview-metric .metric-track { background: var(--panel); }
+.load-values { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 10px; }
+.load-values span { min-width: 0; color: var(--muted); font-size: 11px; }
+.load-values strong { display: block; color: var(--text); font-size: 14px; }
+.overview-section-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+}
+.overview-section-head h2 { margin-bottom: 2px; }
+.overview-section-head p { margin: 0; }
+.traffic-current { display: flex; gap: 18px; text-align: right; white-space: nowrap; }
+.traffic-current span { color: var(--muted); }
+.traffic-current strong { display: block; color: var(--text); font-size: 16px; }
+.traffic-rx { color: #4f8cff; }
+.traffic-tx { color: #45c98f; }
+.traffic-chart-wrap {
+  position: relative; width: 100%; height: 280px; margin-top: 16px;
+  overflow: hidden; border-radius: 8px; background: var(--bg);
+}
+.traffic-chart-wrap canvas { display: block; width: 100%; height: 100%; }
+.traffic-chart-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.traffic-chart-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-top: 10px; font-size: 12px;
+}
+.traffic-legend { display: flex; gap: 14px; }
+.traffic-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.traffic-legend i { width: 18px; height: 3px; border-radius: 2px; }
+.traffic-rx-dot { background: #4f8cff; }
+.traffic-tx-dot { background: #45c98f; }
+.metric-note { margin: 5px 0 0; font-size: 12px; }
+.system-info-list { margin: 0; }
+.system-info-list > div {
+  display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+}
+.system-info-list > div:last-child { border-bottom: 0; }
+.system-info-list dt { color: var(--muted); }
+.system-info-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; text-align: right; }
+.host-addresses { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.overview-services { display: grid; gap: 2px; }
+.overview-services > div {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.overview-services > div:last-child { border-bottom: 0; }
+@media (max-width: 1280px) {
+  .overview-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 1050px) {
+  .overview-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .overview-status-grid { grid-template-columns: 1fr; }
+  .overview-section-head, .traffic-chart-footer { align-items: flex-start; flex-direction: column; }
+  .traffic-current { width: 100%; justify-content: space-between; text-align: left; }
+  .traffic-chart-wrap { height: 220px; }
+}
 .service-status-line { display: flex; align-items: center; gap: 10px 28px; flex-wrap: wrap; margin: 8px 0; }
 .service-status-item { white-space: nowrap; }
 .service-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
 .service-actions form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
 .path-code { overflow-wrap: anywhere; word-break: break-word; }
+.operation-progress {
+  max-width: 680px; margin: 14px 0; padding: 12px 14px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+.operation-progress-head { display: flex; align-items: center; gap: 9px; }
+.operation-progress p { margin: 7px 0 0; color: var(--muted); }
+.operation-progress-track {
+  height: 6px; margin-top: 10px; overflow: hidden; border-radius: 10px; background: var(--bg);
+}
+.operation-progress-track span {
+  display: block; width: 10%; height: 100%; border-radius: inherit;
+  background: var(--accent); transition: width .35s ease;
+}
+.operation-progress.operation-success { border-color: var(--ok); }
+.operation-progress.operation-success .operation-progress-track span { background: var(--ok); }
+.operation-progress.operation-failed { border-color: var(--bad); }
+.operation-progress.operation-failed .operation-progress-track span { background: var(--bad); }
+.runtime-summary { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.compact-card { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.runtime-value { font-size: 18px; overflow-wrap: anywhere; }
+.runtime-section { margin-top: 20px; }
+.runtime-section h3 { margin: 0 0 9px; font-size: 14px; }
+.runtime-table { min-width: 620px; }
+.runtime-table td { vertical-align: middle; }
+.runtime-error { display: block; max-width: 540px; margin-top: 3px; color: var(--bad); overflow-wrap: anywhere; }
+.runtime-reload {
+  margin: 16px 0; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--panel);
+}
+.technical-details { margin-top: 14px; color: var(--muted); }
+.technical-details summary { cursor: pointer; }
+.technical-details .preview { margin-top: 9px; color: var(--text); }
 
 table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }

@@ -2,14 +2,18 @@ package web
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
 
 // caddyPageData feeds the Caddy service page.
 type caddyPageData struct {
-	Active  bool
-	Enabled bool
+	Active     bool
+	Enabled    bool
+	LogLines   int
+	LogContent string
+	LogError   string
 }
 
 type caddyConfigPageData struct {
@@ -18,17 +22,21 @@ type caddyConfigPageData struct {
 	Notice string
 }
 
-func (s *Server) caddyData() caddyPageData {
+func (s *Server) caddyData(r *http.Request) caddyPageData {
+	lines, content, logError := readServiceLog(r, "caddy")
 	return caddyPageData{
-		Active:  sysd.IsActive("caddy"),
-		Enabled: sysd.IsEnabled("caddy"),
+		Active:     sysd.IsActive("caddy"),
+		Enabled:    sysd.IsEnabled("caddy"),
+		LogLines:   lines,
+		LogContent: content,
+		LogError:   logError,
 	}
 }
 
 // handleCaddy renders service controls. Configuration editing lives on a
 // separate raw-text page so the service page stays consistent with BypassCore.
 func (s *Server) handleCaddy(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "caddy", "Caddy", s.caddyData())
+	s.render(w, r, "caddy", "Caddy", s.caddyData(r))
 }
 
 // handleCaddyConfigGET renders the live main Caddyfile in a plain-text editor.
@@ -86,6 +94,19 @@ func (s *Server) handleCaddyService(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/caddy")
 		return
 	}
+	if action == "restart" {
+		// The POST itself is travelling through Caddy. Return an operation ID
+		// first, then wait briefly before restarting so the proxy can finish the
+		// response and the browser never lands on a broken POST URL.
+		operation, _, err := s.beginServiceRestart("caddy", "Caddy", 1200*time.Millisecond)
+		if err != nil {
+			s.setFlash(w, "无法提交 Caddy 重启请求："+err.Error())
+			s.redirect(w, r, "/caddy")
+			return
+		}
+		s.respondServiceOperation(w, r, operation, "/caddy")
+		return
+	}
 	s.caddyMu.Lock()
 	defer s.caddyMu.Unlock()
 	if err := sysd.Action(action, "caddy"); err != nil {
@@ -97,7 +118,11 @@ func (s *Server) handleCaddyService(w http.ResponseWriter, r *http.Request) {
 		case "disable":
 			s.setFlash(w, "Caddy 已关闭开机自启（当前服务不会停止）")
 		default:
-			s.setFlash(w, "Caddy 服务已执行 "+action)
+			if action == "start" {
+				s.setFlash(w, "Caddy 已启动")
+			} else {
+				s.setFlash(w, "Caddy 已停止")
+			}
 		}
 	}
 	s.redirect(w, r, "/caddy")

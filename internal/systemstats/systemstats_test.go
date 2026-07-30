@@ -18,6 +18,17 @@ func TestParseProcStats(t *testing.T) {
 	if err != nil || memTotal != 1000*1024 || memUsed != 750*1024 {
 		t.Fatalf("memory total=%d used=%d err=%v", memTotal, memUsed, err)
 	}
+	load1, load5, load15, err := parseLoadAvg([]byte("0.25 0.50 1.75 1/100 123\n"))
+	if err != nil || load1 != 0.25 || load5 != 0.50 || load15 != 1.75 {
+		t.Fatalf("load averages=%v/%v/%v err=%v", load1, load5, load15, err)
+	}
+	uptime, err := parseUptime([]byte("90061.75 100.00\n"))
+	if err != nil || uptime != 90061*time.Second+750*time.Millisecond {
+		t.Fatalf("uptime=%v err=%v", uptime, err)
+	}
+	if got := parseOSRelease([]byte("NAME=Linux\nPRETTY_NAME=\"Example Linux 1.0\"\n")); got != "Example Linux 1.0" {
+		t.Fatalf("os release=%q", got)
+	}
 }
 
 func TestParseDiskAndNetwork(t *testing.T) {
@@ -54,6 +65,7 @@ func TestSamplerRates(t *testing.T) {
 		}
 	}
 	write(filepath.Join(proc, "stat"), "cpu 100 0 100 800 0 0 0 0\n")
+	write(filepath.Join(proc, "loadavg"), "0.10 0.20 0.30 1/100 123\n")
 	write(filepath.Join(proc, "meminfo"), "MemTotal: 1000 kB\nMemAvailable: 500 kB\n")
 	write(filepath.Join(proc, "diskstats"), "8 0 sda 1 0 100 0 1 0 100 0 0 0 0\n")
 	write(filepath.Join(proc, "net", "dev"), "eth0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0\n")
@@ -61,8 +73,11 @@ func TestSamplerRates(t *testing.T) {
 	now := time.Unix(100, 0)
 	s := &Sampler{procRoot: proc, sysRoot: sys, diskPath: root, now: func() time.Time { return now }}
 	first := s.Sample()
-	if !first.CPUAvailable || !first.MemoryAvailable || !first.IOAvailable || !first.NetworkAvailable {
+	if !first.CPUAvailable || !first.LoadAvailable || !first.MemoryAvailable || !first.IOAvailable || !first.NetworkAvailable {
 		t.Fatalf("first sample unavailable: %+v", first)
+	}
+	if first.Load1 != 0.10 || first.Load5 != 0.20 || first.Load15 != 0.30 {
+		t.Fatalf("unexpected load averages: %+v", first)
 	}
 
 	write(filepath.Join(proc, "stat"), "cpu 150 0 150 900 0 0 0 0\n")

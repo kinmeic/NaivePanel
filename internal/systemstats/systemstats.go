@@ -5,8 +5,10 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,11 @@ type Stats struct {
 
 	CPUAvailable bool    `json:"cpu_available"`
 	CPUPercent   float64 `json:"cpu_percent"`
+
+	LoadAvailable bool    `json:"load_available"`
+	Load1         float64 `json:"load_1"`
+	Load5         float64 `json:"load_5"`
+	Load15        float64 `json:"load_15"`
 
 	MemoryAvailable bool    `json:"memory_available"`
 	MemoryTotal     uint64  `json:"memory_total"`
@@ -45,6 +52,18 @@ type Stats struct {
 	NetworkTxTotal   uint64  `json:"network_tx_total"`
 
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+// HostInfo contains mostly static information displayed on the overview page.
+// Missing Linux-specific files result in useful portable fallbacks.
+type HostInfo struct {
+	Hostname      string
+	Distribution  string
+	KernelVersion string
+	SystemType    string
+	Addresses     []string
+	BootTime      time.Time
+	Uptime        time.Duration
 }
 
 type counters struct {
@@ -107,6 +126,17 @@ func (s *Sampler) Sample() Stats {
 		}
 	} else {
 		result.Warnings = append(result.Warnings, "CPU 统计不可用")
+	}
+
+	if data, err := os.ReadFile(filepath.Join(s.procRoot, "loadavg")); err == nil {
+		if load1, load5, load15, err := parseLoadAvg(data); err == nil {
+			result.LoadAvailable = true
+			result.Load1, result.Load5, result.Load15 = load1, load5, load15
+		} else {
+			result.Warnings = append(result.Warnings, "系统负载: "+err.Error())
+		}
+	} else {
+		result.Warnings = append(result.Warnings, "系统负载统计不可用")
 	}
 
 	if data, err := os.ReadFile(filepath.Join(s.procRoot, "meminfo")); err == nil {
@@ -196,11 +226,112 @@ func (s *Sampler) Sample() Stats {
 	return result
 }
 
+// ReadHostInfo reads host metadata without running external commands.
+func ReadHostInfo() HostInfo {
+	info := HostInfo{
+		Hostname:      "未知",
+		Distribution:  runtime.GOOS,
+		KernelVersion: "未知",
+		SystemType:    runtime.GOOS + " / " + runtime.GOARCH,
+		Addresses:     hostAddresses(),
+	}
+	if hostname, err := os.Hostname(); err == nil && strings.TrimSpace(hostname) != "" {
+		info.Hostname = hostname
+	}
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		if prettyName := parseOSRelease(data); prettyName != "" {
+			info.Distribution = prettyName
+		}
+	}
+	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		if version := strings.TrimSpace(string(data)); version != "" {
+			info.KernelVersion = version
+		}
+	}
+	if data, err := os.ReadFile("/proc/uptime"); err == nil {
+		if uptime, err := parseUptime(data); err == nil {
+			info.Uptime = uptime
+			info.BootTime = time.Now().Add(-uptime)
+		}
+	}
+	return info
+}
+
+func hostAddresses() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	result := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil || ip == nil || ip.IsLoopback() || !ip.IsGlobalUnicast() {
+			continue
+		}
+		result = append(result, ip.String())
+	}
+	return result
+}
+
+func parseOSRelease(data []byte) string {
+	values := make(map[string]string)
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			if unquoted, err := strconv.Unquote(value); err == nil {
+				value = unquoted
+			}
+		}
+		values[strings.TrimSpace(key)] = value
+	}
+	if values["PRETTY_NAME"] != "" {
+		return values["PRETTY_NAME"]
+	}
+	return strings.TrimSpace(values["NAME"] + " " + values["VERSION"])
+}
+
+func parseUptime(data []byte) (time.Duration, error) {
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, errors.New("缺少运行时间")
+	}
+	seconds, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || seconds < 0 {
+		return 0, errors.New("运行时间格式异常")
+	}
+	return time.Duration(seconds * float64(time.Second)), nil
+}
+
 func delta(current, previous uint64) uint64 {
 	if current < previous {
 		return 0
 	}
 	return current - previous
+}
+
+func parseLoadAvg(data []byte) (load1, load5, load15 float64, err error) {
+	fields := strings.Fields(string(data))
+	if len(fields) < 3 {
+		return 0, 0, 0, errors.New("loadavg 格式异常")
+	}
+	values := []*float64{&load1, &load5, &load15}
+	for index, target := range values {
+		value, parseErr := strconv.ParseFloat(fields[index], 64)
+		if parseErr != nil || value < 0 {
+			return 0, 0, 0, errors.New("loadavg 数值异常")
+		}
+		*target = value
+	}
+	return load1, load5, load15, nil
 }
 
 func parseCPUStat(data []byte) (total, idle uint64, err error) {

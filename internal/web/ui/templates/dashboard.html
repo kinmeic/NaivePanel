@@ -1,72 +1,121 @@
 {{define "content"}}
-<h1>仪表盘</h1>
-<div class="cards">
-  <div class="card">
-    <h3>{{icon "gauge"}}面板</h3>
-    <p>版本：<code>{{.Data.Version}}</code></p>
-    <p>域名：<strong>{{.Data.Domain}}</strong></p>
-    <p>访问地址：<code>https://{{.Data.HostSite}}{{.Data.BasePath}}/</code></p>
-    <p>内部监听：<code>{{.Data.Listen}}</code></p>
-    <p>MFA：{{if .Data.TOTPEnabled}}<span class="ok">已启用</span>{{else}}<span class="warn">未启用（建议到 设置 开启）</span>{{end}}</p>
-  </div>
-  <div class="card">
-    <h3>{{icon "activity"}}服务状态</h3>
-    <p>naivepanel：{{if .Data.PanelActive}}<span class="ok">运行中</span>{{else}}<span class="bad">异常</span>{{end}}</p>
-    <p>caddy：{{if .Data.CaddyActive}}<span class="ok">运行中</span>{{else}}<span class="bad">未运行</span>{{end}}</p>
-    <p>bypasscore：
-      {{if .Data.BypassInstall}}
-        {{if .Data.BypassActive}}<span class="ok">运行中</span>{{else}}<span class="warn">已安装未运行</span>{{end}}
-        {{if .Data.BypassVersion}}<span class="service-version mono">{{.Data.BypassVersion}}</span>{{end}}
-      {{else}}<span class="muted">未安装</span>{{end}}
-    </p>
-  </div>
-  <div class="card">
-    <h3>{{icon "map"}}Geo 数据</h3>
-    {{range .Data.Geo}}
-    <p>{{.Name}}：{{if .Exists}}{{fmtTime .ModTime}}{{else}}<span class="warn">缺失</span>{{end}}</p>
-    {{end}}
-    <p><a href="{{.Base}}/geo">更新 Geo 数据 →</a></p>
-  </div>
-</div>
-
-<div class="list-head system-head">
-  <div>
-    <h2>{{icon "activity"}}系统资源</h2>
-    <p class="muted">每 3 秒更新；磁盘 I/O 与网络带宽为两次采样之间的平均速率。</p>
-  </div>
+<div class="overview-title">
+  <h1>概览</h1>
   <span id="system-sampled-at" class="muted">正在采样…</span>
 </div>
-<div class="cards system-cards" data-system-stats-url="{{.Base}}/system/stats">
-  <div class="card metric-card">
-    <h3>{{icon "cpu"}}CPU</h3>
-    <div class="metric-value" id="metric-cpu">—</div>
-    <div class="metric-track"><span id="metric-cpu-bar"></span></div>
-    <p class="muted" id="metric-cpu-note">等待首次采样</p>
+
+<div class="overview-grid" data-system-stats-url="{{.Base}}/system/stats">
+  <div class="overview-column">
+    <section class="card overview-card">
+      <h2>{{icon "activity"}}状态</h2>
+      <div class="overview-status-grid">
+        <div class="overview-metric">
+          <div class="overview-metric-head">
+            <span>{{icon "cpu"}}CPU</span>
+            <strong id="metric-cpu">—</strong>
+          </div>
+          <div class="metric-track"><span id="metric-cpu-bar"></span></div>
+          <p id="metric-cpu-note" class="muted">等待首次采样</p>
+        </div>
+        <div class="overview-metric">
+          <div class="overview-metric-head">
+            <span>{{icon "memory-stick"}}内存</span>
+            <strong id="metric-memory">—</strong>
+          </div>
+          <div class="metric-track"><span id="metric-memory-bar"></span></div>
+          <p id="metric-memory-note" class="muted">等待首次采样</p>
+        </div>
+        <div class="overview-metric">
+          <div class="overview-metric-head">
+            <span>{{icon "gauge"}}负载</span>
+            <strong id="metric-load">—</strong>
+          </div>
+          <div class="load-values">
+            <span>1 分钟<strong id="metric-load-1">—</strong></span>
+            <span>5 分钟<strong id="metric-load-5">—</strong></span>
+            <span>15 分钟<strong id="metric-load-15">—</strong></span>
+          </div>
+          <p id="metric-load-note" class="muted">等待首次采样</p>
+        </div>
+        <div class="overview-metric">
+          <div class="overview-metric-head">
+            <span>{{icon "hard-drive-download"}}磁盘</span>
+            <strong id="metric-disk">—</strong>
+          </div>
+          <div class="metric-track"><span id="metric-disk-bar"></span></div>
+          <p id="metric-disk-note" class="muted">等待首次采样</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card overview-card traffic-card">
+      <div class="overview-section-head">
+        <div>
+          <h2>{{icon "network"}}网络流量</h2>
+          <p class="muted">最近 2 分钟实时带宽，每 3 秒更新</p>
+        </div>
+        <div class="traffic-current">
+          <span class="traffic-rx">接收 <strong id="metric-net-rx">—</strong></span>
+          <span class="traffic-tx">发送 <strong id="metric-net-tx">—</strong></span>
+        </div>
+      </div>
+      <div class="traffic-chart-wrap">
+        <canvas id="traffic-chart" role="img" aria-label="网络接收和发送实时带宽折线图"></canvas>
+        <div id="traffic-chart-empty" class="traffic-chart-empty muted">正在收集流量数据…</div>
+      </div>
+      <div class="traffic-chart-footer">
+        <div class="traffic-legend" aria-hidden="true">
+          <span><i class="traffic-rx-dot"></i>接收</span>
+          <span><i class="traffic-tx-dot"></i>发送</span>
+        </div>
+        <span id="metric-net-total" class="muted">累计：—</span>
+      </div>
+      <p id="metric-network-note" class="muted metric-note">等待首次采样</p>
+    </section>
   </div>
-  <div class="card metric-card">
-    <h3>{{icon "memory-stick"}}内存</h3>
-    <div class="metric-value" id="metric-memory">—</div>
-    <div class="metric-track"><span id="metric-memory-bar"></span></div>
-    <p class="muted" id="metric-memory-note">等待首次采样</p>
-  </div>
-  <div class="card metric-card">
-    <h3>{{icon "hard-drive-download"}}磁盘空间与 I/O</h3>
-    <div class="metric-value" id="metric-disk">—</div>
-    <div class="metric-track"><span id="metric-disk-bar"></span></div>
-    <div class="metric-pairs">
-      <span>读取 <strong id="metric-disk-read">—</strong></span>
-      <span>写入 <strong id="metric-disk-write">—</strong></span>
-    </div>
-    <p class="muted" id="metric-disk-note">等待首次采样</p>
-  </div>
-  <div class="card metric-card">
-    <h3>{{icon "network"}}网络流量</h3>
-    <div class="metric-pairs network-rates">
-      <span>接收 <strong id="metric-net-rx">—</strong></span>
-      <span>发送 <strong id="metric-net-tx">—</strong></span>
-    </div>
-    <p id="metric-net-total" class="muted">累计：—</p>
-    <p class="muted" id="metric-network-note">等待首次采样</p>
-  </div>
+
+  <aside class="overview-column">
+    <section class="card overview-card">
+      <h2>{{icon "server"}}系统信息</h2>
+      <dl class="system-info-list">
+        <div><dt>主机名</dt><dd>{{.Data.Host.Hostname}}</dd></div>
+        <div><dt>发行版</dt><dd>{{.Data.Host.Distribution}}</dd></div>
+        <div><dt>内核版本</dt><dd><code>{{.Data.Host.KernelVersion}}</code></dd></div>
+        <div><dt>系统类型</dt><dd>{{.Data.Host.SystemType}}</dd></div>
+        <div>
+          <dt>主机地址</dt>
+          <dd class="host-addresses">
+            {{if .Data.Host.Addresses}}
+              {{range .Data.Host.Addresses}}<code>{{.}}</code>{{end}}
+            {{else}}
+              <span class="muted">未检测到</span>
+            {{end}}
+          </dd>
+        </div>
+        <div><dt>启动时间</dt><dd>{{fmtTime .Data.Host.BootTime}}</dd></div>
+        <div><dt>运行时间</dt><dd>{{.Data.Uptime}}</dd></div>
+      </dl>
+    </section>
+
+    <section class="card overview-card">
+      <h2>{{icon "activity"}}服务状态</h2>
+      <div class="overview-services">
+        <div>
+          <span>NaivePanel</span>
+          {{if .Data.PanelActive}}<strong class="ok">运行中</strong>{{else}}<strong class="bad">异常</strong>{{end}}
+        </div>
+        <div>
+          <span>Caddy</span>
+          {{if .Data.CaddyActive}}<strong class="ok">运行中</strong>{{else}}<strong class="bad">未运行</strong>{{end}}
+        </div>
+        <div>
+          <span>BypassCore</span>
+          {{if .Data.BypassInstall}}
+            {{if .Data.BypassActive}}<strong class="ok">运行中</strong>{{else}}<strong class="warn">已安装未运行</strong>{{end}}
+          {{else}}<strong class="muted">未安装</strong>{{end}}
+        </div>
+      </div>
+    </section>
+  </aside>
 </div>
 {{end}}

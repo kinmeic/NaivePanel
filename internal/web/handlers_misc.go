@@ -5,33 +5,48 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/sysd"
+	"github.com/kinmeic/NaivePanel/internal/systemstats"
 )
 
-// handleDashboard shows a service overview.
+// handleDashboard shows the host and service overview.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	bcInstalled := s.Bypass.Installed()
-	totpOn, _ := s.Cfg.TOTPState()
-	geoCfg := s.Cfg.GeoSnapshot()
+	host := systemstats.ReadHostInfo()
 	data := map[string]any{
-		"Domain":        s.Cfg.Domain,
-		"Version":       s.Version,
-		"BasePath":      s.Cfg.BasePath,
-		"Listen":        s.Cfg.Listen,
-		"HostSite":      s.Cfg.GetHostSite(),
+		"Host":          host,
+		"Uptime":        formatUptime(host.Uptime),
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
 		"BypassActive":  bcInstalled && sysd.IsActive("bypasscore"),
-		"BypassVersion": s.Bypass.Version(),
 		"PanelActive":   sysd.IsActive("naivepanel"),
-		"Geo":           geo.Stat(geoCfg.Dir),
-		"TOTPEnabled":   totpOn,
 	}
-	s.render(w, r, "dashboard", "仪表盘", data)
+	s.render(w, r, "dashboard", "概览", data)
+}
+
+func formatUptime(value time.Duration) string {
+	if value <= 0 {
+		return "未知"
+	}
+	totalMinutes := int64(value / time.Minute)
+	days := totalMinutes / (24 * 60)
+	hours := (totalMinutes / 60) % 24
+	minutes := totalMinutes % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%d 天 %d 小时 %d 分钟", days, hours, minutes)
+	case hours > 0:
+		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
+	case totalMinutes > 0:
+		return fmt.Sprintf("%d 分钟", minutes)
+	default:
+		return "不到 1 分钟"
+	}
 }
 
 // handleCaddyReload reloads Caddy with the live on-disk config.
@@ -56,6 +71,10 @@ func (s *Server) handleBypass(w http.ResponseWriter, r *http.Request) {
 		"Enabled":   installed && sysd.IsEnabled("bypasscore"),
 		"SocksPort": s.Cfg.BypassCore.SocksPort,
 	}
+	logLines, logContent, logError := readServiceLog(r, "bypasscore")
+	data["LogLines"] = logLines
+	data["LogContent"] = logContent
+	data["LogError"] = logError
 	content, configErr := s.Bypass.ReadConfig()
 	control, inspectErr := bypasscore.InspectControlConfig(content)
 	switch {
@@ -80,11 +99,17 @@ func (s *Server) handleBypass(w http.ResponseWriter, r *http.Request) {
 			data["StatusDetail"] = err.Error()
 			break
 		}
-		var v any
-		if json.Unmarshal([]byte(status), &v) == nil {
-			data["Status"] = v
+		view, parseErr := newBypassStatusView(status, time.Now())
+		if parseErr == nil {
+			data["StatusView"] = view
+			var raw any
+			if json.Unmarshal([]byte(status), &raw) == nil {
+				data["StatusRaw"] = raw
+			}
 		} else {
 			data["StatusRaw"] = string(status)
+			data["StatusWarning"] = "控制面状态已获取，但当前版本返回了面板尚未识别的格式。"
+			data["StatusDetail"] = parseErr.Error()
 		}
 	}
 	s.render(w, r, "bypass", "BypassCore", data)
@@ -164,14 +189,24 @@ func (s *Server) handleBypassConfigGET(w http.ResponseWriter, r *http.Request) {
 // handleBypassConfigPOST applies a new config through the validate pipeline.
 func (s *Server) handleBypassConfigPOST(w http.ResponseWriter, r *http.Request) {
 	content := r.FormValue("config")
-	if err := s.Bypass.ApplyConfig([]byte(content)); err != nil {
+	result, err := s.Bypass.ApplyConfigWithResult([]byte(content))
+	if err != nil {
 		s.render(w, r, "bypass_config", "BypassCore 配置", map[string]any{
 			"Config": content,
 			"Error":  err.Error(),
 		})
 		return
 	}
-	s.setFlash(w, "配置已校验并生效（热重载或按需重启）")
+	switch result.Mode {
+	case bypasscore.ApplyHotReloaded:
+		s.setFlash(w, "配置已保存并通过热重载生效，无需重启 BypassCore")
+	case bypasscore.ApplyRestarted:
+		s.setFlash(w, "配置已保存；此项变更需要重启，面板已自动重启 BypassCore 并确认恢复")
+	case bypasscore.ApplySavedOnly:
+		s.setFlash(w, "配置已校验并保存；BypassCore 当前未运行，将在下次启动时生效")
+	default:
+		s.setFlash(w, "配置已校验并生效")
+	}
 	s.redirect(w, r, "/bypasscore")
 }
 
@@ -180,6 +215,16 @@ func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 	action := r.FormValue("action")
 	switch action {
 	case "start", "stop", "restart", "enable", "disable":
+		if action == "restart" {
+			operation, _, err := s.beginServiceRestart("bypasscore", "BypassCore", 0)
+			if err != nil {
+				s.setFlash(w, "无法提交 BypassCore 重启请求："+err.Error())
+				s.redirect(w, r, "/bypasscore")
+				return
+			}
+			s.respondServiceOperation(w, r, operation, "/bypasscore")
+			return
+		}
 		if err := sysd.Action(action, "bypasscore"); err != nil {
 			s.setFlash(w, err.Error())
 		} else {
@@ -189,7 +234,11 @@ func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 			case "disable":
 				s.setFlash(w, "BypassCore 已关闭开机自启（当前服务不会停止）")
 			default:
-				s.setFlash(w, "bypasscore "+action+" 完成")
+				if action == "start" {
+					s.setFlash(w, "BypassCore 已启动")
+				} else {
+					s.setFlash(w, "BypassCore 已停止")
+				}
 			}
 		}
 	default:

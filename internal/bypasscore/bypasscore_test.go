@@ -2,9 +2,12 @@ package bypasscore
 
 import (
 	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kinmeic/NaivePanel/internal/config"
@@ -153,4 +156,130 @@ test -f "$3"
 	if err := manager.checkConfig(configPath); err != nil {
 		t.Fatalf("checkConfig did not use bypasscore.work_dir: %v", err)
 	}
+}
+
+func TestVersionTagExtractsCompactVersion(t *testing.T) {
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "bypasscore")
+	script := `#!/bin/sh
+echo 'bypasscore v0.8.7 (commit=abcdef, built=2026-07-30T00:00:00Z, go=go1.26)'
+`
+	if err := os.WriteFile(fakeBin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	manager := New(&config.Config{BypassCore: config.BypassCore{BinPath: fakeBin}})
+	if got := manager.VersionTag(); got != "v0.8.7" {
+		t.Fatalf("VersionTag()=%q, want v0.8.7", got)
+	}
+}
+
+func TestApplyConfigReportsSavedOnlyForStoppedService(t *testing.T) {
+	manager, content := newApplyTestManager(t, "")
+	manager.serviceActive = func() bool { return false }
+	manager.restartService = func() error {
+		t.Fatal("stopped service must not be started by saving configuration")
+		return nil
+	}
+
+	result, err := manager.ApplyConfigWithResult(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != ApplySavedOnly {
+		t.Fatalf("mode=%q, want %q", result.Mode, ApplySavedOnly)
+	}
+}
+
+func TestApplyConfigReportsHotReload(t *testing.T) {
+	manager, content := newApplyTestManager(t, "success")
+	manager.serviceActive = func() bool { return true }
+	manager.restartService = func() error {
+		t.Fatal("successful control-plane reload must not restart the service")
+		return nil
+	}
+
+	result, err := manager.ApplyConfigWithResult(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != ApplyHotReloaded {
+		t.Fatalf("mode=%q, want %q", result.Mode, ApplyHotReloaded)
+	}
+}
+
+func TestApplyConfigReportsAutomaticRestart(t *testing.T) {
+	manager, content := newApplyTestManager(t, "restart_required")
+	manager.serviceActive = func() bool { return true }
+	var restarts atomic.Int32
+	manager.restartService = func() error {
+		restarts.Add(1)
+		return nil
+	}
+
+	result, err := manager.ApplyConfigWithResult(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != ApplyRestarted || restarts.Load() != 1 {
+		t.Fatalf("result=%#v restarts=%d", result, restarts.Load())
+	}
+}
+
+func newApplyTestManager(t *testing.T, controlResponse string) (*Manager, []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	fakeBin := filepath.Join(dir, "bypasscore")
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	socketDir, err := os.MkdirTemp("/tmp", "bc-apply-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "control.sock")
+	if controlResponse != "" {
+		listener, err := net.Listen("unix", socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/config/reload":
+				if controlResponse == "restart_required" {
+					w.WriteHeader(http.StatusConflict)
+					_, _ = w.Write([]byte(`{"error":{"code":"restart_required"}}`))
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			case "/v1/ready":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"ready":true}`))
+			default:
+				http.NotFound(w, r)
+			}
+		})}
+		go func() { _ = server.Serve(listener) }()
+		t.Cleanup(func() {
+			_ = server.Close()
+			_ = listener.Close()
+		})
+	}
+
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"outbounds":[],"routing":{"rules":[]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{"control":{"enabled":true,"socket":"` + socket + `"},"outbounds":[],"routing":{"rules":[]}}`)
+	manager := New(&config.Config{
+		BackupDir: filepath.Join(dir, "backups"),
+		BypassCore: config.BypassCore{
+			BinPath:     fakeBin,
+			ConfigPath:  configPath,
+			ControlSock: socket,
+			WorkDir:     dir,
+		},
+	})
+	return manager, content
 }

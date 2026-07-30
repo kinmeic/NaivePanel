@@ -12,7 +12,11 @@
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <button name="action" value="start" class="btn">{{icon "play"}}启动</button>
         <button name="action" value="stop" class="btn" data-confirm="停止 Caddy 后面板将随站点一起不可访问，需要到服务器上手动启动，确定停止？">{{icon "square"}}停止</button>
-        <button name="action" value="restart" class="btn" data-confirm="重启期间面板与站点会短暂断连，确定重启 Caddy？">{{icon "rotate-cw"}}重启</button>
+        <button name="action" value="restart" class="btn"
+                data-confirm="重启期间面板与站点会短暂断连；页面将自动等待服务恢复，确定继续？"
+                data-async-restart data-service-label="Caddy"
+                data-progress-target="caddy-restart-progress"
+                data-return-url="{{.Base}}/caddy">{{icon "rotate-cw"}}重启</button>
       </form>
       <form method="post" action="{{.Base}}/caddy/service">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -27,8 +31,29 @@
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <button type="submit" class="btn" data-confirm="确定要用已保存的 Caddyfile 重载 Caddy？">{{icon "refresh-cw"}}重载配置</button>
       </form>
-      <a class="btn" href="{{.Base}}/logs?service=caddy">{{icon "scroll-text"}}查看日志</a>
     </div>
+    <div id="caddy-restart-progress" class="operation-progress hidden" role="status" aria-live="polite">
+      <div class="operation-progress-head">
+        <span class="spinner" aria-hidden="true"></span>
+        <strong data-operation-title>准备重启 Caddy</strong>
+      </div>
+      <div class="operation-progress-track"><span data-operation-bar></span></div>
+      <p data-operation-message>正在提交请求…</p>
+    </div>
+    <p class="muted">修改 Caddyfile 后优先使用“重载配置”，可在不中断面板连接的情况下生效；只有升级或服务异常时才需要重启。</p>
   </div>
 </div>
+
+<h2>{{icon "scroll-text"}}Caddy 日志</h2>
+<p class="muted">来自 systemd journal 的 Caddy 运行日志（最新在最后）。</p>
+<div class="logbar">
+  <span class="muted">行数：</span>
+  <a class="btn {{if eq .Data.LogLines 100}}active{{end}}" href="{{.Base}}/caddy?lines=100">100</a>
+  <a class="btn {{if eq .Data.LogLines 200}}active{{end}}" href="{{.Base}}/caddy?lines=200">200</a>
+  <a class="btn {{if eq .Data.LogLines 500}}active{{end}}" href="{{.Base}}/caddy?lines=500">500</a>
+  <a class="btn {{if eq .Data.LogLines 1000}}active{{end}}" href="{{.Base}}/caddy?lines=1000">1000</a>
+  <a class="btn" href="{{.Base}}/caddy?lines={{.Data.LogLines}}">{{icon "refresh-cw"}}刷新</a>
+</div>
+{{if .Data.LogError}}<div class="error">{{.Data.LogError}}</div>{{end}}
+{{if .Data.LogContent}}<pre class="preview logs">{{.Data.LogContent}}</pre>{{end}}
 {{end}}
