@@ -109,6 +109,7 @@ func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
 type siteRow struct {
 	Site     sites.Site
 	FileName string
+	Inline   bool // block lives inside the main Caddyfile (not yet migrated)
 }
 
 // handleSiteList is the async fragment behind the Caddy page's sites tab:
@@ -122,7 +123,7 @@ func (s *Server) handleSiteList(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		rows = append(rows, siteRow{Site: *st, FileName: ds.FileName})
+		rows = append(rows, siteRow{Site: *st, FileName: ds.FileName, Inline: ds.Inline})
 	}
 	s.renderFrag(w, r, "sites_list", map[string]any{
 		"Rows":     rows,
@@ -215,13 +216,13 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
+	ds, onDisk := s.Caddy.ReadDiskSite(domain)
 	st, ok := s.Cfg.GetSite(domain)
 	if !ok {
-		// Disk-only snippet (never managed by the panel): adopt it into the
+		// Disk-only site (never managed by the panel): adopt it into the
 		// model first so deletion goes through the same safe path (staging,
 		// validation, rollback).
-		ds, found := s.Caddy.ReadDiskSite(domain)
-		if !found {
+		if !onDisk {
 			s.setFlash(w, "站点不存在")
 			s.redirect(w, r, "/caddy/sites")
 			return
@@ -234,6 +235,12 @@ func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		st = *parsed
 		_ = s.Cfg.UpsertSite(st)
+	}
+	if onDisk {
+		// Make sure the next Apply removes the on-disk copy too: an inline
+		// block would otherwise be migrated right back, and a foreign
+		// snippet is outside the panel's managed set.
+		s.Caddy.DropDomain(domain)
 	}
 	if err := s.Cfg.DeleteSite(domain); err != nil {
 		s.setFlash(w, err.Error())

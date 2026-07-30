@@ -29,17 +29,32 @@ type Manager struct {
 	// managed tracks the domains the panel has rendered, so applyLive only
 	// prunes snippets it owns and never deletes foreign files that happen to
 	// sit in the sites directory.
+	//
+	// drop holds domains whose on-disk presence (inline block in the main
+	// Caddyfile or foreign snippet) must be removed on the next Apply —
+	// set when deleting a disk-only site.
 	mu      sync.Mutex
 	managed map[string]bool
+	drop    map[string]bool
 }
 
 // New creates a Manager bound to the panel config.
 func New(cfg *config.Config) *Manager {
-	m := &Manager{cfg: cfg, managed: map[string]bool{}}
+	m := &Manager{cfg: cfg, managed: map[string]bool{}, drop: map[string]bool{}}
 	for _, s := range cfg.SitesSnapshot() {
 		m.managed[s.Domain] = true
 	}
 	return m
+}
+
+// DropDomain marks a domain's on-disk configuration for removal on the next
+// Apply, whether it lives as an inline block in the main Caddyfile or as a
+// foreign snippet the panel never rendered. Used when deleting a disk-only
+// site; consumed by the next Apply.
+func (m *Manager) DropDomain(domain string) {
+	m.mu.Lock()
+	m.drop[domain] = true
+	m.mu.Unlock()
 }
 
 // RenderAll renders the main Caddyfile and every site snippet into a map of
@@ -51,18 +66,41 @@ func (m *Manager) RenderAll() (map[string]string, error) {
 }
 
 func (m *Manager) renderAll(importDir string) (map[string]string, error) {
-	out := map[string]string{
-		"Caddyfile": sites.RenderMain("admin@"+m.cfg.Domain, importDir),
-	}
+	out := map[string]string{}
 	panel := sites.PanelInfo{BasePath: m.cfg.BasePath, Listen: m.cfg.Listen, ProxyToken: m.cfg.ProxyToken}
 	hostSite := m.cfg.GetHostSite()
+	modelDomains := map[string]bool{}
 	for _, s := range m.cfg.SitesSnapshot() {
 		snippet, err := sites.Render(&s, panel, s.Domain == hostSite, m.cfg.BypassCore.SocksPort)
 		if err != nil {
 			return nil, fmt.Errorf("渲染站点 %s: %w", s.Domain, err)
 		}
 		out[filepath.Join("sites", s.Domain+".caddy")] = snippet
+		modelDomains[s.Domain] = true
 	}
+
+	// Migrate inline site blocks from the live main Caddyfile into snippet
+	// files, verbatim, so nothing the operator wrote is lost when the main
+	// file is rewritten as head + import. Model-rendered sites and domains
+	// being deleted win over (skip) the inline copy.
+	head := ""
+	if live, err := os.ReadFile(m.cfg.Caddy.MainFile); err == nil {
+		splitHead, inline := sites.SplitMain(string(live))
+		head = splitHead
+		m.mu.Lock()
+		for _, ms := range inline {
+			if ms.Domain == "" || modelDomains[ms.Domain] || m.drop[ms.Domain] {
+				continue
+			}
+			rel := filepath.Join("sites", ms.Domain+".caddy")
+			if _, err := os.Stat(filepath.Join(m.cfg.Caddy.SitesDir, ms.Domain+".caddy")); err == nil {
+				continue // a snippet file already owns this domain
+			}
+			out[rel] = ms.Content + "\n"
+		}
+		m.mu.Unlock()
+	}
+	out["Caddyfile"] = sites.RenderMainPreserve(head, "admin@"+m.cfg.Domain, importDir)
 	return out, nil
 }
 
@@ -73,15 +111,17 @@ func (m *Manager) RenderSite(s *sites.Site) (string, error) {
 }
 
 // writeStaging writes rendered files into a fresh staging dir and returns
-// it. The staged main file is rewritten to import the staged sites dir so
-// that validation covers the new snippets, not the live ones.
+// it. The staged main file's import path is retargeted to the staged sites
+// dir so that validation covers the new snippets, not the live ones.
 func (m *Manager) writeStaging(files map[string]string) (string, error) {
 	dir, err := os.MkdirTemp("", "naivepanel-caddy-*")
 	if err != nil {
 		return "", err
 	}
 	files = maps.Clone(files)
-	files["Caddyfile"] = sites.RenderMain("admin@"+m.cfg.Domain, filepath.Join(dir, "sites"))
+	files["Caddyfile"] = strings.ReplaceAll(files["Caddyfile"],
+		"import "+filepath.Join(m.cfg.Caddy.SitesDir, "*.caddy"),
+		"import "+filepath.Join(dir, "sites", "*.caddy"))
 	for rel, content := range files {
 		p := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
@@ -109,10 +149,13 @@ func (m *Manager) validate(staging string) error {
 	return nil
 }
 
-// backup snapshots the current live config into the backup dir.
+// backup snapshots the current live config into a timestamped folder under
+// <Caddyfile dir>/backup/ (e.g. /etc/caddy/backup/), keeping the newest
+// keepBackups snapshots.
 func (m *Manager) backup() (string, error) {
 	stamp := time.Now().Format("20060102-150405")
-	dst := filepath.Join(m.cfg.BackupDir, "caddy", stamp)
+	root := filepath.Join(filepath.Dir(m.cfg.Caddy.MainFile), "backup")
+	dst := filepath.Join(root, stamp)
 	if err := os.MkdirAll(dst, 0700); err != nil {
 		return "", err
 	}
@@ -139,7 +182,7 @@ func (m *Manager) backup() (string, error) {
 			}
 		}
 	}
-	pruneBackups(filepath.Join(m.cfg.BackupDir, "caddy"), keepBackups)
+	pruneBackups(root, keepBackups)
 	return dst, nil
 }
 
@@ -219,11 +262,18 @@ func (m *Manager) applyLive(files map[string]string) error {
 		if domain == "" {
 			domain = strings.TrimSuffix(e.Name(), ".caddy")
 		}
-		if m.managed[domain] || wantDomains[domain] {
+		if m.managed[domain] || wantDomains[domain] || m.drop[domain] {
 			os.Remove(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()))
 		}
 	}
-	m.managed = wantDomains
+	// Only model domains count as managed: snippets migrated verbatim from
+	// the live main Caddyfile stay foreign, so a later Apply that no longer
+	// renders them (their inline copy is gone) must not prune them.
+	m.managed = map[string]bool{}
+	for _, s := range m.cfg.SitesSnapshot() {
+		m.managed[s.Domain] = true
+	}
+	m.drop = map[string]bool{}
 	m.mu.Unlock()
 	for rel, content := range files {
 		if !strings.HasPrefix(rel, "sites/") {

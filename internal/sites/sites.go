@@ -3,7 +3,6 @@ package sites
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 )
 
@@ -271,16 +270,4 @@ func renderPanelBlock(b *strings.Builder, panel PanelInfo, n int) {
 	indent(b, n, "}")
 	indent(b, n, "redir "+panel.BasePath+" "+panel.BasePath+"/ 308")
 	b.WriteString("\n")
-}
-
-// RenderMain produces the main Caddyfile importing all site snippets from
-// sitesDir.
-func RenderMain(email, sitesDir string) string {
-	var b strings.Builder
-	b.WriteString("{\n")
-	if email != "" {
-		b.WriteString("\temail " + token(email) + "\n")
-	}
-	b.WriteString("}\n\nimport " + filepath.Join(sitesDir, "*.caddy") + "\n")
-	return b.String()
 }

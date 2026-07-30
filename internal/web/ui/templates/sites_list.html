@@ -4,7 +4,7 @@
   <tbody>
   {{range .Data.Rows}}
   <tr>
-    <td><strong>{{.Site.Domain}}</strong>{{if eq .Site.Domain $.Data.HostSite}} <span class="tag">面板寄宿</span>{{end}}</td>
+    <td><strong>{{.Site.Domain}}</strong>{{if eq .Site.Domain $.Data.HostSite}} <span class="tag">面板寄宿</span>{{end}}{{if .Inline}} <span class="tag">主文件内</span>{{end}}</td>
     <td>{{if .Site.RawMode}}高级模式{{else}}{{.Site.Web.Type}}{{end}}</td>
     <td>{{if .Site.ForwardProxy.Enabled}}启用（{{len .Site.ForwardProxy.Accounts}} 个账号）{{else}}关闭{{end}}</td>
     <td class="mono">{{if .Site.ForwardProxy.Enabled}}{{if .Site.ForwardProxy.UseBypassCore}}BypassCore{{else}}{{if .Site.ForwardProxy.Upstream}}{{.Site.ForwardProxy.Upstream}}{{else}}直连{{end}}{{end}}{{else}}-{{end}}</td>

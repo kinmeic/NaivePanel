@@ -191,7 +191,7 @@ import /etc/caddy/sites/*.caddy
 渲染/编辑新配置
   → 写入临时文件
   → 校验（caddy validate --config / bypasscore -check-config / POST /v1/config/validate）
-  → 备份当前配置到 /etc/naivepanel/backups/<组件>/<时间戳>/
+  → 备份当前配置（caddy → /etc/caddy/backup/<时间戳>/，bypasscore → /etc/naivepanel/backups/bypasscore/<时间戳>/）
   → 落盘生效
   → 重载（caddy reload --config / POST /v1/config/reload）
   → 探活（caddy: 本地 HTTPS 请求站点根路径 / bypasscore: GET /v1/ready）

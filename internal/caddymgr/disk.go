@@ -9,33 +9,45 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/sites"
 )
 
-// DiskSite is a site snippet found on disk under the sites directory.
+// DiskSite is a site configuration found on disk: either a snippet file
+// under the sites directory or an inline block in the main Caddyfile.
 type DiskSite struct {
-	FileName string
+	FileName string // snippet file name, or "Caddyfile" for inline blocks
 	Domain   string // parsed from the site block header; falls back to file base name
 	Content  string
+	Inline   bool // the block lives inside the main Caddyfile
 }
 
-// ListDiskSites reads every site snippet currently on disk, sorted by domain.
+// ListDiskSites reads every site configuration currently on disk — snippet
+// files plus inline blocks in the main Caddyfile — sorted by domain.
 func (m *Manager) ListDiskSites() []DiskSite {
-	entries, err := os.ReadDir(m.cfg.Caddy.SitesDir)
-	if err != nil {
-		return nil
-	}
 	var out []DiskSite
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".caddy") {
-			continue
+	seen := map[string]bool{}
+	if entries, err := os.ReadDir(m.cfg.Caddy.SitesDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".caddy") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()))
+			if err != nil {
+				continue
+			}
+			domain := sites.DomainFromHeader(string(data))
+			if domain == "" {
+				domain = strings.TrimSuffix(e.Name(), ".caddy")
+			}
+			seen[domain] = true
+			out = append(out, DiskSite{FileName: e.Name(), Domain: domain, Content: string(data)})
 		}
-		data, err := os.ReadFile(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()))
-		if err != nil {
-			continue
+	}
+	if data, err := os.ReadFile(m.cfg.Caddy.MainFile); err == nil {
+		_, inline := sites.SplitMain(string(data))
+		for _, ms := range inline {
+			if ms.Domain == "" || seen[ms.Domain] {
+				continue
+			}
+			out = append(out, DiskSite{FileName: "Caddyfile", Domain: ms.Domain, Content: ms.Content, Inline: true})
 		}
-		domain := sites.DomainFromHeader(string(data))
-		if domain == "" {
-			domain = strings.TrimSuffix(e.Name(), ".caddy")
-		}
-		out = append(out, DiskSite{FileName: e.Name(), Domain: domain, Content: string(data)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
 	return out
