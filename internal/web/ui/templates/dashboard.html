@@ -33,4 +33,45 @@
     <p><a href="{{.Base}}/geo">更新 Geo 数据 →</a></p>
   </div>
 </div>
+
+<div class="list-head system-head">
+  <div>
+    <h2>{{icon "activity"}}系统资源</h2>
+    <p class="muted">每 3 秒更新；磁盘 I/O 与网络带宽为两次采样之间的平均速率。</p>
+  </div>
+  <span id="system-sampled-at" class="muted">正在采样…</span>
+</div>
+<div class="cards system-cards" data-system-stats-url="{{.Base}}/system/stats">
+  <div class="card metric-card">
+    <h3>{{icon "cpu"}}CPU</h3>
+    <div class="metric-value" id="metric-cpu">—</div>
+    <div class="metric-track"><span id="metric-cpu-bar"></span></div>
+    <p class="muted" id="metric-cpu-note">等待首次采样</p>
+  </div>
+  <div class="card metric-card">
+    <h3>{{icon "memory-stick"}}内存</h3>
+    <div class="metric-value" id="metric-memory">—</div>
+    <div class="metric-track"><span id="metric-memory-bar"></span></div>
+    <p class="muted" id="metric-memory-note">等待首次采样</p>
+  </div>
+  <div class="card metric-card">
+    <h3>{{icon "hard-drive-download"}}磁盘空间与 I/O</h3>
+    <div class="metric-value" id="metric-disk">—</div>
+    <div class="metric-track"><span id="metric-disk-bar"></span></div>
+    <div class="metric-pairs">
+      <span>读取 <strong id="metric-disk-read">—</strong></span>
+      <span>写入 <strong id="metric-disk-write">—</strong></span>
+    </div>
+    <p class="muted" id="metric-disk-note">等待首次采样</p>
+  </div>
+  <div class="card metric-card">
+    <h3>{{icon "network"}}网络流量</h3>
+    <div class="metric-pairs network-rates">
+      <span>接收 <strong id="metric-net-rx">—</strong></span>
+      <span>发送 <strong id="metric-net-tx">—</strong></span>
+    </div>
+    <p id="metric-net-total" class="muted">累计：—</p>
+    <p class="muted" id="metric-network-note">等待首次采样</p>
+  </div>
+</div>
 {{end}}

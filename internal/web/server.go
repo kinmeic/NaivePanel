@@ -19,7 +19,9 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/caddymgr"
 	"github.com/kinmeic/NaivePanel/internal/config"
+	"github.com/kinmeic/NaivePanel/internal/cronmgr"
 	"github.com/kinmeic/NaivePanel/internal/sites"
+	"github.com/kinmeic/NaivePanel/internal/systemstats"
 )
 
 //go:embed ui/templates ui/static
@@ -30,6 +32,8 @@ type Server struct {
 	Cfg      *config.Config
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
+	Cron     *cronmgr.Manager
+	Stats    *systemstats.Sampler
 	Sessions *auth.Store
 	Limiter  *auth.Limiter
 	Version  string
@@ -54,10 +58,16 @@ type pageData struct {
 
 // New builds the server and its routes.
 func New(cfg *config.Config, version string) (*Server, error) {
+	cron, err := cronmgr.New(cronmgr.DefaultPaths(cfg.SourcePath()))
+	if err != nil {
+		return nil, fmt.Errorf("初始化计划任务: %w", err)
+	}
 	s := &Server{
 		Cfg:      cfg,
 		Caddy:    caddymgr.New(cfg),
 		Bypass:   bypasscore.New(cfg),
+		Cron:     cron,
+		Stats:    systemstats.New(),
 		Sessions: auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
 		Limiter:  auth.NewLimiter(5, 15*time.Minute),
 		Version:  version,
@@ -139,6 +149,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/logout", s.protect(s.handleLogout))
 
 	s.mux.HandleFunc("GET "+bp+"/{$}", s.protect(s.handleDashboard))
+	s.mux.HandleFunc("GET "+bp+"/system/stats", s.protect(s.handleSystemStats))
+
+	s.mux.HandleFunc("GET "+bp+"/cron", s.protect(s.handleCron))
+	s.mux.HandleFunc("GET "+bp+"/cron/new", s.protect(s.handleCronNew))
+	s.mux.HandleFunc("POST "+bp+"/cron/new", s.protect(s.handleCronCreate))
+	s.mux.HandleFunc("GET "+bp+"/cron/{id}/edit", s.protect(s.handleCronEdit))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/edit", s.protect(s.handleCronUpdate))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/toggle", s.protect(s.handleCronToggle))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/run", s.protect(s.handleCronRun))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/delete", s.protect(s.handleCronDelete))
+	s.mux.HandleFunc("POST "+bp+"/cron/service", s.protect(s.handleCronService))
 
 	s.mux.HandleFunc("GET "+bp+"/sites", s.protect(s.redirectTo("/caddy/sites")))
 	s.mux.HandleFunc("GET "+bp+"/sites/new", s.protect(s.handleSiteNew))

@@ -105,6 +105,22 @@
     syncWebFields();
   }
 
+  // Preserve route semantics explicitly. Most Caddyfiles should use the
+  // normal directive ordering; route is opt-in and retained when imported.
+  var useRouteToggle = document.getElementById("use-route-toggle");
+  var handlersBlock = document.getElementById("caddy-handlers-block");
+  if (useRouteToggle && handlersBlock) {
+    function syncRouteBlock() {
+      handlersBlock.classList.toggle("caddy-route-block", useRouteToggle.checked);
+      handlersBlock.classList.toggle("caddy-directives-block", !useRouteToggle.checked);
+      handlersBlock.querySelectorAll(".caddy-route-brace").forEach(function (brace) {
+        brace.classList.toggle("hidden", !useRouteToggle.checked);
+      });
+    }
+    useRouteToggle.addEventListener("change", syncRouteBlock);
+    syncRouteBlock();
+  }
+
   // Extra block add/remove.
   var addBtn = document.getElementById("eb-add");
   if (addBtn) {
@@ -149,357 +165,6 @@
     });
   }
 
-  // Generic structured JSON editor for BypassCore. It deliberately models
-  // every JSON value instead of a fixed schema so new core fields survive a
-  // round trip and advanced configurations remain editable.
-  var jsonForm = document.getElementById("bypass-config-form");
-  if (jsonForm) {
-    var rawPanel = document.getElementById("json-raw-panel");
-    var structuredPanel = document.getElementById("json-structured-panel");
-    var rawInput = document.getElementById("bypass-config-raw");
-    var tree = document.getElementById("json-tree");
-    var structuredTab = document.getElementById("json-structured-tab");
-    var rawTab = document.getElementById("json-raw-tab");
-    var editorError = document.getElementById("json-editor-error");
-    var editorMode = "raw";
-    var maxTreeNodes = 2500;
-
-    function showJSONError(message) {
-      editorError.textContent = message || "";
-      editorError.classList.toggle("hidden", !message);
-    }
-
-    function valueKind(value) {
-      if (value === null) return "null";
-      if (Array.isArray(value)) return "array";
-      return typeof value;
-    }
-
-    function defaultValue(kind) {
-      switch (kind) {
-      case "object": return {};
-      case "array": return [];
-      case "number": return 0;
-      case "boolean": return false;
-      case "null": return null;
-      default: return "";
-      }
-    }
-
-    function countJSONNodes(value, limit) {
-      var count = 1;
-      if (value && typeof value === "object") {
-        var values = Array.isArray(value) ? value : Object.keys(value).map(function (key) { return value[key]; });
-        for (var i = 0; i < values.length; i++) {
-          count += countJSONNodes(values[i], limit - count);
-          if (count > limit) return count;
-        }
-      }
-      return count;
-    }
-
-    function makeTypeSelect(kind, onChange) {
-      var select = document.createElement("select");
-      select.className = "json-type";
-      ["string", "number", "boolean", "object", "array", "null"].forEach(function (name) {
-        var option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        option.selected = name === kind;
-        select.appendChild(option);
-      });
-      select.addEventListener("click", function (event) { event.stopPropagation(); });
-      select.addEventListener("change", function () { onChange(select.value); });
-      return select;
-    }
-
-    function makeDeleteButton(onDelete) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "json-delete danger icon-btn";
-      button.innerHTML = TRASH_SVG;
-      button.title = "删除此项";
-      button.setAttribute("aria-label", "删除此项");
-      button.addEventListener("click", onDelete);
-      return button;
-    }
-
-    function makeValueHost(value, depth) {
-      var host = document.createElement("div");
-      host.className = "json-value-host";
-      function render(next) {
-        host.replaceChildren(makeJSONNode(next, depth, render));
-      }
-      host._jsonRead = function () {
-        return host.firstElementChild._jsonRead();
-      };
-      render(value);
-      return host;
-    }
-
-    function makeJSONNode(value, depth, rerender) {
-      var kind = valueKind(value);
-      var node = document.createElement("div");
-      node.className = "json-node json-" + kind;
-
-      if (kind === "object" || kind === "array") {
-        var details = document.createElement("details");
-        details.className = "json-composite";
-        details.open = depth < 2;
-        var summary = document.createElement("summary");
-        var count = kind === "array" ? value.length : Object.keys(value).length;
-        summary.appendChild(document.createTextNode((kind === "array" ? "数组" : "对象") + " · " + count + " 项 "));
-        summary.appendChild(makeTypeSelect(kind, function (nextKind) {
-          if (nextKind !== kind) rerender(defaultValue(nextKind));
-        }));
-        details.appendChild(summary);
-
-        var children = document.createElement("div");
-        children.className = "json-children";
-        details.appendChild(children);
-
-        function refreshSummary() {
-          var total = children.children.length;
-          summary.firstChild.nodeValue = (kind === "array" ? "数组" : "对象") + " · " + total + " 项 ";
-        }
-
-        function addObjectEntry(key, childValue) {
-          var row = document.createElement("div");
-          row.className = "json-entry";
-          var keyInput = document.createElement("input");
-          keyInput.type = "text";
-          keyInput.className = "json-key mono";
-          keyInput.value = key;
-          keyInput.setAttribute("aria-label", "JSON 字段名");
-          var host = makeValueHost(childValue, depth + 1);
-          row.appendChild(keyInput);
-          row.appendChild(host);
-          row.appendChild(makeDeleteButton(function () {
-            row.remove();
-            refreshSummary();
-          }));
-          row._jsonKey = keyInput;
-          row._jsonValue = host;
-          children.appendChild(row);
-        }
-
-        function addArrayEntry(childValue) {
-          var row = document.createElement("div");
-          row.className = "json-entry json-array-entry";
-          var index = document.createElement("span");
-          index.className = "json-index mono";
-          var host = makeValueHost(childValue, depth + 1);
-          row.appendChild(index);
-          row.appendChild(host);
-          row.appendChild(makeDeleteButton(function () {
-            row.remove();
-            Array.prototype.forEach.call(children.children, function (entry, i) {
-              entry.querySelector(".json-index").textContent = "#" + (i + 1);
-            });
-            refreshSummary();
-          }));
-          row._jsonValue = host;
-          children.appendChild(row);
-          index.textContent = "#" + children.children.length;
-        }
-
-        if (kind === "object") {
-          Object.keys(value).forEach(function (key) { addObjectEntry(key, value[key]); });
-        } else {
-          value.forEach(addArrayEntry);
-        }
-
-        var add = document.createElement("button");
-        add.type = "button";
-        add.className = "btn json-add";
-        add.textContent = kind === "object" ? "添加字段" : "添加数组项";
-        add.addEventListener("click", function () {
-          if (kind === "object") {
-            var base = "newField";
-            var key = base;
-            var used = {};
-            Array.prototype.forEach.call(children.children, function (entry) {
-              used[entry._jsonKey.value] = true;
-            });
-            for (var i = 2; used[key]; i++) key = base + i;
-            addObjectEntry(key, "");
-          } else {
-            addArrayEntry("");
-          }
-          refreshSummary();
-          details.open = true;
-        });
-        details.appendChild(add);
-        node.appendChild(details);
-
-        node._jsonRead = function () {
-          if (kind === "array") {
-            return Array.prototype.map.call(children.children, function (entry) {
-              return entry._jsonValue._jsonRead();
-            });
-          }
-          var result = Object.create(null);
-          Array.prototype.forEach.call(children.children, function (entry) {
-            var key = entry._jsonKey.value.trim();
-            if (!key) throw new Error("对象字段名不能为空");
-            if (Object.prototype.hasOwnProperty.call(result, key)) {
-              throw new Error("对象中存在重复字段：" + key);
-            }
-            result[key] = entry._jsonValue._jsonRead();
-          });
-          return result;
-        };
-        return node;
-      }
-
-      var primitive = document.createElement("div");
-      primitive.className = "json-primitive";
-      var input;
-      if (kind === "boolean") {
-        input = document.createElement("select");
-        ["true", "false"].forEach(function (text) {
-          var option = document.createElement("option");
-          option.value = text;
-          option.textContent = text;
-          option.selected = value === (text === "true");
-          input.appendChild(option);
-        });
-      } else if (kind === "null") {
-        input = document.createElement("span");
-        input.className = "json-null mono";
-        input.textContent = "null";
-      } else {
-        input = document.createElement("input");
-        input.type = kind === "number" ? "number" : "text";
-        if (kind === "number") input.step = "any";
-        input.value = String(value);
-        input.className = kind === "string" ? "mono" : "";
-      }
-      primitive.appendChild(input);
-      primitive.appendChild(makeTypeSelect(kind, function (nextKind) {
-        if (nextKind !== kind) rerender(defaultValue(nextKind));
-      }));
-      node.appendChild(primitive);
-      node._jsonRead = function () {
-        if (kind === "null") return null;
-        if (kind === "boolean") return input.value === "true";
-        if (kind === "number") {
-          var number = Number(input.value);
-          if (!Number.isFinite(number)) throw new Error("数字字段包含无效值");
-          return number;
-        }
-        return input.value;
-      };
-      return node;
-    }
-
-    function parseRawConfig(forStructuredEditor) {
-      var text = rawInput.value.trim();
-      if (forStructuredEditor && hasUnsafeJSONInteger(text)) {
-        throw new Error("配置包含超出 JavaScript 安全范围的整数，请使用高级 JSON 模式编辑");
-      }
-      var value = text ? JSON.parse(text) : {};
-      if (!value || Array.isArray(value) || typeof value !== "object") {
-        throw new Error("BypassCore 配置的顶层必须是 JSON 对象");
-      }
-      if (countJSONNodes(value, maxTreeNodes) > maxTreeNodes) {
-        throw new Error("配置超过 2500 个节点，请使用高级 JSON 模式编辑");
-      }
-      return value;
-    }
-
-    // JSON.parse rounds integers beyond 2^53. Detect them outside quoted
-    // strings and keep those uncommon configs in lossless raw mode.
-    function hasUnsafeJSONInteger(text) {
-      var inString = false;
-      var escaped = false;
-      for (var i = 0; i < text.length; i++) {
-        var ch = text[i];
-        if (inString) {
-          if (escaped) escaped = false;
-          else if (ch === "\\") escaped = true;
-          else if (ch === '"') inString = false;
-          continue;
-        }
-        if (ch === '"') {
-          inString = true;
-          continue;
-        }
-        if (ch === "-" || (ch >= "0" && ch <= "9")) {
-          var match = text.slice(i).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-          if (!match) continue;
-          var token = match[0];
-          i += token.length - 1;
-          if (token.indexOf(".") === -1 && !/[eE]/.test(token) &&
-              !Number.isSafeInteger(Number(token))) {
-            return true;
-          }
-        }
-      }
-      return false;
-    }
-
-    function buildTreeFromRaw() {
-      var value = parseRawConfig(true);
-      tree.replaceChildren(makeValueHost(value, 0));
-      showJSONError("");
-    }
-
-    function syncTreeToRaw() {
-      var host = tree.firstElementChild;
-      if (!host) throw new Error("结构化配置尚未载入");
-      var value = host._jsonRead();
-      if (!value || Array.isArray(value) || typeof value !== "object") {
-        throw new Error("BypassCore 配置的顶层必须是 JSON 对象");
-      }
-      rawInput.value = JSON.stringify(value, null, 2) + "\n";
-      showJSONError("");
-    }
-
-    function activateStructured() {
-      try {
-        buildTreeFromRaw();
-      } catch (err) {
-        showJSONError("无法进入结构化模式：" + err.message);
-        return;
-      }
-      editorMode = "structured";
-      structuredPanel.classList.remove("hidden");
-      rawPanel.classList.add("hidden");
-      structuredTab.classList.add("active");
-      rawTab.classList.remove("active");
-    }
-
-    function activateRaw() {
-      if (editorMode === "structured") {
-        try {
-          syncTreeToRaw();
-        } catch (err) {
-          showJSONError("无法生成 JSON：" + err.message);
-          return;
-        }
-      }
-      editorMode = "raw";
-      structuredPanel.classList.add("hidden");
-      rawPanel.classList.remove("hidden");
-      structuredTab.classList.remove("active");
-      rawTab.classList.add("active");
-    }
-
-    structuredTab.addEventListener("click", activateStructured);
-    rawTab.addEventListener("click", activateRaw);
-    jsonForm.addEventListener("submit", function (event) {
-      try {
-        if (editorMode === "structured") syncTreeToRaw();
-        else parseRawConfig(false);
-      } catch (err) {
-        event.preventDefault();
-        showJSONError("配置无法提交：" + err.message);
-      }
-    });
-    activateStructured();
-  }
-
   // Prevent duplicate service/config operations while a form is submitting.
   document.addEventListener("submit", function (e) {
     if (e.defaultPrevented) return;
@@ -522,4 +187,198 @@
       });
     });
   });
+
+  // Dashboard resource sampler. Values are inserted with textContent so a
+  // malformed response can never inject markup into the page.
+  var systemCards = document.querySelector("[data-system-stats-url]");
+  if (systemCards) {
+    var firstSystemSample = true;
+    function formatBytes(value) {
+      var number = Number(value);
+      if (!Number.isFinite(number) || number < 0) return "—";
+      var units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+      var index = 0;
+      while (number >= 1024 && index < units.length - 1) {
+        number /= 1024;
+        index++;
+      }
+      var digits = number >= 100 || index === 0 ? 0 : number >= 10 ? 1 : 2;
+      return number.toFixed(digits) + " " + units[index];
+    }
+    function formatRate(value) {
+      return formatBytes(value) + "/s";
+    }
+    function percent(value) {
+      var number = Number(value);
+      if (!Number.isFinite(number)) return "—";
+      return Math.max(0, Math.min(100, number)).toFixed(1) + "%";
+    }
+    function setText(id, text) {
+      var element = document.getElementById(id);
+      if (element) element.textContent = text;
+    }
+    function setBar(id, value) {
+      var element = document.getElementById(id);
+      if (!element) return;
+      var number = Number(value);
+      element.style.width = (Number.isFinite(number) ? Math.max(0, Math.min(100, number)) : 0) + "%";
+    }
+    function unavailable(noteID, available) {
+      if (!available) setText(noteID, "当前系统无法读取此项指标");
+    }
+    function renderSystemStats(stats) {
+      if (stats.cpu_available) {
+        setText("metric-cpu", percent(stats.cpu_percent));
+        setText("metric-cpu-note", firstSystemSample ? "首次采样完成，下一次开始计算区间使用率" : "当前总 CPU 使用率");
+        setBar("metric-cpu-bar", stats.cpu_percent);
+      } else {
+        unavailable("metric-cpu-note", false);
+      }
+      if (stats.memory_available) {
+        setText("metric-memory", percent(stats.memory_percent));
+        setText("metric-memory-note", formatBytes(stats.memory_used) + " / " + formatBytes(stats.memory_total));
+        setBar("metric-memory-bar", stats.memory_percent);
+      } else {
+        unavailable("metric-memory-note", false);
+      }
+      if (stats.disk_available) {
+        setText("metric-disk", percent(stats.disk_percent));
+        setText("metric-disk-note", "已用 " + formatBytes(stats.disk_used) + "，可用 " + formatBytes(stats.disk_free));
+        setBar("metric-disk-bar", stats.disk_percent);
+      } else {
+        unavailable("metric-disk-note", false);
+      }
+      if (stats.io_available) {
+        setText("metric-disk-read", formatRate(stats.disk_read_bps));
+        setText("metric-disk-write", formatRate(stats.disk_write_bps));
+      }
+      if (stats.network_available) {
+        setText("metric-net-rx", formatRate(stats.network_rx_bps));
+        setText("metric-net-tx", formatRate(stats.network_tx_bps));
+        setText("metric-net-total", "累计接收 " + formatBytes(stats.network_rx_total) + " · 发送 " + formatBytes(stats.network_tx_total));
+        setText("metric-network-note", firstSystemSample ? "首次采样完成，下一次开始计算实时带宽" : "不含 loopback 回环流量");
+      } else {
+        unavailable("metric-network-note", false);
+      }
+      var sampled = new Date(stats.sampled_at);
+      setText("system-sampled-at", Number.isNaN(sampled.getTime()) ? "刚刚更新" : "更新于 " + sampled.toLocaleTimeString());
+      firstSystemSample = false;
+    }
+    function loadSystemStats() {
+      fetch(systemCards.getAttribute("data-system-stats-url"), {
+        credentials: "same-origin",
+        cache: "no-store"
+      }).then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      }).then(renderSystemStats).catch(function () {
+        setText("system-sampled-at", "资源数据暂时不可用");
+      });
+    }
+    loadSystemStats();
+    setInterval(loadSystemStats, 3000);
+  }
+
+  // Cron presets are intentionally local text helpers. The server still
+  // performs complete schedule/script validation before persisting anything.
+  var cronSchedule = document.getElementById("cron-schedule");
+  if (cronSchedule) {
+    document.querySelectorAll("[data-cron-schedule]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        cronSchedule.value = button.getAttribute("data-cron-schedule");
+        cronSchedule.focus();
+      });
+    });
+  }
+  var cronScript = document.getElementById("cron-script");
+  if (cronScript) {
+    var cronTemplates = {
+      backup: "#!/bin/sh\nset -eu\n\nbackup_dir=/var/backups/naivepanel\nmkdir -p \"$backup_dir\"\ntar -czf \"$backup_dir/config-$(date +%Y%m%d-%H%M%S).tar.gz\" /etc/caddy /etc/naivepanel\nfind \"$backup_dir\" -type f -name 'config-*.tar.gz' -mtime +14 -delete\n",
+      cleanup: "#!/bin/sh\nset -eu\n\n# 删除 30 天前的压缩日志；请按实际路径调整。\nfind /var/log -type f -name '*.gz' -mtime +30 -delete\njournalctl --vacuum-time=30d\n",
+      custom: "#!/bin/sh\nset -eu\n\n"
+    };
+    document.querySelectorAll("[data-cron-template]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var kind = button.getAttribute("data-cron-template");
+        if (cronScript.value.trim() && !confirm("替换当前脚本内容？")) return;
+        cronScript.value = cronTemplates[kind] || cronTemplates.custom;
+        cronScript.focus();
+      });
+    });
+  }
+
+  // Lossless JSON formatter for the raw BypassCore editor. It validates with
+  // JSON.parse but formats lexically, preserving duplicate keys and integers
+  // larger than JavaScript's safe numeric range exactly as the user typed.
+  var jsonFormatButton = document.getElementById("json-format-btn");
+  var bypassRawConfig = document.getElementById("bypass-config-raw");
+  if (jsonFormatButton && bypassRawConfig) {
+    function nextJSONToken(text, start) {
+      for (var i = start; i < text.length; i++) {
+        if (!/\s/.test(text[i])) return text[i];
+      }
+      return "";
+    }
+    function formatJSONLosslessly(text) {
+      if (text.length > 2 * 1024 * 1024) {
+        throw new Error("文件超过 2 MiB，无法在浏览器中安全格式化");
+      }
+      JSON.parse(text);
+      var output = "";
+      var depth = 0;
+      var inString = false;
+      var escaped = false;
+      for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (inString) {
+          output += ch;
+          if (escaped) escaped = false;
+          else if (ch === "\\") escaped = true;
+          else if (ch === '"') inString = false;
+          continue;
+        }
+        if (ch === '"') {
+          inString = true;
+          output += ch;
+        } else if (/\s/.test(ch)) {
+          continue;
+        } else if (ch === "{" || ch === "[") {
+          output += ch;
+          if (nextJSONToken(text, i + 1) !== (ch === "{" ? "}" : "]")) {
+            if (depth >= 200) throw new Error("JSON 嵌套超过 200 层");
+            depth++;
+            output += "\n" + "  ".repeat(depth);
+          }
+        } else if (ch === "}" || ch === "]") {
+          var matchingOpen = ch === "}" ? "{" : "[";
+          if (output.slice(-1) !== matchingOpen) {
+            depth = Math.max(0, depth - 1);
+            output += "\n" + "  ".repeat(depth);
+          }
+          output += ch;
+        } else if (ch === ",") {
+          output += ",\n" + "  ".repeat(depth);
+        } else if (ch === ":") {
+          output += ": ";
+        } else {
+          output += ch;
+        }
+        if (output.length > 4 * 1024 * 1024) {
+          throw new Error("格式化后的内容超过 4 MiB");
+        }
+      }
+      return output + "\n";
+    }
+    jsonFormatButton.addEventListener("click", function () {
+      var errorBox = document.getElementById("json-format-error");
+      try {
+        bypassRawConfig.value = formatJSONLosslessly(bypassRawConfig.value);
+        errorBox.textContent = "";
+        errorBox.classList.add("hidden");
+      } catch (error) {
+        errorBox.textContent = "无法格式化：" + error.message;
+        errorBox.classList.remove("hidden");
+      }
+    });
+  }
 })();

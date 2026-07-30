@@ -11,18 +11,24 @@ BypassCore 分流核心与 Geo 数据文件。
   可删除），静态站 / PHP 站 / 反向代理站 / 纯代理站，自定义 handle / handle_path 块，
   高级模式（原始 Caddyfile 片段），保存即 `caddy validate → 备份 → reload → 探活 → 失败回滚`
 - **Caddy 运维**：服务控制（启动 / 停止 / 重启 / 重载）+ 配置查看（磁盘实况原文）
+- **系统监控**：仪表盘实时展示 CPU、内存、磁盘容量与 I/O、网络实时带宽与累计流量
+- **计划任务**：Web 管理 5 字段 Cron 任务，支持备份/日志清理模板、启停、立即运行与执行日志；
+  用户脚本保存为 root 专用独立文件，Cron 条目不内联脚本内容
 - **forward_proxy**：basic_auth 多账号、upstream 配置（可联动本机 BypassCore），
   hide_ip / hide_via / probe_resistance 固定注入
 - **面板自更新**：设置页检查/安装新版本（GitHub release，SHA256SUMS 校验 + 安装前自检 +
   替换后自动重启），可开启每天自动更新
 - **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
-  通用结构化 JSON 编辑（保留高级 JSON 模式与未知字段）、`-check-config` → 控制面事务热重载、
+  原始 JSON 编辑与无损格式化、`-check-config` → 控制面事务热重载、
   服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源
 - **服务日志**：面板内查看 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 
-从磁盘导入普通 Caddyfile 时，面板同时识别自身的 `route` 格式和常见的无 `route` 格式。
+从磁盘导入普通 Caddyfile 时，面板同时识别有 `route` 和无 `route` 的格式，并原样保留这项语义。
+新建站点默认依赖 Caddy 的内置指令排序；只有确实需要固定 HTTP 处理链顺序时才应开启 `route`。
+存在 `forward_proxy` 站点时，主 Caddyfile 会保留或补充 NaiveProxy 推荐的
+`order forward_proxy before file_server` 全局选项；普通站点不会因此依赖 forwardproxy 插件。
 域名、建站类型、`forward_proxy`、`handle` 块仍以表单编辑；`tls` / `log` / `bind` 等站点选项
 以及无法映射到简化字段的 HTTP 指令会保留在结构化表单的对应区域。只有无法安全拆分的片段才回退到整段原文模式。
 
@@ -58,7 +64,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.3.5
+VER=v0.3.6
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
@@ -115,8 +121,8 @@ sudo chmod 600 /etc/naivepanel/config.yaml
 ```
 
 > - `caddy.bin` 取服务器上实际的 caddy 路径；`main_file` / `sites_dir` 按你的布局调整。
-> - **注意**：面板保存站点时会把 `main_file` 重写为「email + import sites_dir」的极简形式。
->   如果你在主 Caddyfile 里有自定义全局配置，请先迁移到 `sites_dir` 的片段文件中。
+> - 面板保存站点时会保留 `main_file` 中的全局选项、注释、命名片段和其他顶层指令，
+>   并确保只存在一条 `import sites_dir/*.caddy`。
 
 ```bash
 # 4. 主 Caddyfile 导入片段目录（已有 import 行则跳过，不要覆盖现有配置）
@@ -126,24 +132,24 @@ grep -q 'import /etc/caddy/sites' /etc/caddy/Caddyfile 2>/dev/null || \
 # 5. 面板寄宿站点的引导片段（面板上线后由它接管渲染，此处仅为首次拉起面板）
 sudo tee "/etc/caddy/sites/example.com.caddy" >/dev/null <<EOF
 :443, example.com {
-	route {
-		handle ${BASE_PATH}/* {
-			reverse_proxy 127.0.0.1:9000 {
-				header_up X-NaivePanel-Key ${PROXY_TOKEN}
-			}
+	handle ${BASE_PATH}/* {
+		reverse_proxy 127.0.0.1:9000 {
+			header_up X-NaivePanel-Key ${PROXY_TOKEN}
 		}
-		redir ${BASE_PATH} ${BASE_PATH}/ 308
-
-		root * /var/www/example.com
-		encode gzip zstd
-		file_server
 	}
+	redir ${BASE_PATH} ${BASE_PATH}/ 308
+
+	root * /var/www/example.com
+	encode gzip zstd
+	file_server
 }
 EOF
 sudo chmod 600 /etc/caddy/sites/example.com.caddy
 sudo mkdir -p /var/www/example.com
 
-# 6. 校验并重载 Caddy，注册并启动面板服务
+# 6. 安装 Cron，校验并重载 Caddy，注册并启动面板服务
+sudo apt-get install -y cron
+sudo systemctl enable --now cron
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy || sudo systemctl restart caddy
 sudo /usr/local/bin/naivepanel install -config /etc/naivepanel/config.yaml -bin /usr/local/bin/naivepanel
@@ -186,6 +192,8 @@ internal/sites/      站点模型与 Caddyfile 渲染
 internal/caddymgr/   Caddy 配置管线（validate/备份/reload/回滚/预览）
 internal/bypasscore/ BypassCore 安装、配置管线、控制面客户端
 internal/geo/        Geo 数据下载与校验
+internal/cronmgr/    计划任务状态、独立脚本与 /etc/cron.d 同步
+internal/systemstats/ Linux /proc 与文件系统资源采样
 internal/service/    跨平台服务安装（systemd / procd / launchd）
 internal/sysd/       systemctl 封装
 internal/web/        HTTP 服务与内嵌 UI

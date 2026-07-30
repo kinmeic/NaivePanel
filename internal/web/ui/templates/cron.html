@@ -1,0 +1,92 @@
+{{define "content"}}
+<div class="list-head">
+  <div>
+    <h1>计划任务（Cron）</h1>
+    <p class="muted">通过独立脚本文件管理备份、日志清理和其他周期性任务。</p>
+  </div>
+  {{if not .Data.StateError}}
+  <a class="btn primary" href="{{.Base}}/cron/new">{{icon "plus"}}新建任务</a>
+  {{end}}
+</div>
+
+{{if .Data.StateError}}
+<div class="error">计划任务状态读取失败，已禁止修改以避免覆盖原文件：{{.Data.StateError}}</div>
+{{end}}
+{{if not .Data.Installed}}
+<div class="warning">未检测到 <code>cron</code> 命令。请先在服务器执行 <code>apt install cron</code>；已保存的任务不会执行。</div>
+{{else if not .Data.Active}}
+<div class="warning">
+  Cron 服务未运行，已启用的任务暂时不会执行。
+  <form method="post" action="{{.Base}}/cron/service" class="inline">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button name="action" value="start">{{icon "play"}}启动 Cron</button>
+  </form>
+</div>
+{{end}}
+
+<div class="cards cron-status-cards">
+  <div class="card">
+    <h3>{{icon "activity"}}Cron 服务</h3>
+    <p>运行状态：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+    <p>开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</p>
+    {{if and .Data.Installed (not .Data.Enabled)}}
+    <form method="post" action="{{.Base}}/cron/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button name="action" value="enable">{{icon "check"}}开启自启</button>
+    </form>
+    {{end}}
+  </div>
+  <div class="card">
+    <h3>{{icon "shield-check"}}安全边界</h3>
+    <p class="muted">脚本以 <strong>root</strong> 权限执行。Cron 条目只引用面板生成的独立脚本，不会内联用户输入。</p>
+    <p class="muted">Cron 文件：<code>{{.Data.CronFile}}</code></p>
+  </div>
+</div>
+
+{{if not .Data.StateError}}
+{{if .Data.Tasks}}
+<div class="table-scroll">
+<table class="cron-table">
+  <thead><tr><th>任务</th><th>执行周期</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+  <tbody>
+  {{range .Data.Tasks}}
+  <tr>
+    <td><strong>{{.Name}}</strong></td>
+    <td><code>{{.Schedule}}</code></td>
+    <td>{{if .Enabled}}<span class="ok">已启用</span>{{else}}<span class="muted">已停用</span>{{end}}</td>
+    <td>{{fmtTime .UpdatedAt}}</td>
+    <td class="cron-actions">
+      <a class="btn icon-btn" href="{{$.Base}}/cron/{{.ID}}/edit" title="编辑" aria-label="编辑">{{icon "pencil"}}</a>
+      <form method="post" action="{{$.Base}}/cron/{{.ID}}/run" class="inline" data-confirm="立即以 root 权限运行“{{.Name}}”？">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <button class="icon-btn" title="立即运行" aria-label="立即运行">{{icon "play"}}</button>
+      </form>
+      <form method="post" action="{{$.Base}}/cron/{{.ID}}/toggle" class="inline">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        {{if .Enabled}}
+        <input type="hidden" name="enabled" value="false">
+        <button class="icon-btn" title="停用" aria-label="停用">{{icon "square"}}</button>
+        {{else}}
+        <input type="hidden" name="enabled" value="true">
+        <button class="icon-btn" title="启用" aria-label="启用">{{icon "check"}}</button>
+        {{end}}
+      </form>
+      <form method="post" action="{{$.Base}}/cron/{{.ID}}/delete" class="inline" data-confirm="确定删除计划任务“{{.Name}}”？">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <button class="danger icon-btn" title="删除" aria-label="删除">{{icon "trash-2"}}</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<div class="empty">还没有计划任务。可新建备份、日志清理或自定义脚本任务。</div>
+{{end}}
+{{end}}
+
+<h2>{{icon "scroll-text"}}执行日志</h2>
+<p class="muted">最近输出来自 <code>{{.Data.LogFile}}</code>。</p>
+{{if .Data.LogError}}<div class="error">{{.Data.LogError}}</div>{{else}}<pre class="preview cron-log">{{.Data.Log}}</pre>{{end}}
+{{end}}

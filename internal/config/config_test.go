@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kinmeic/NaivePanel/internal/sites"
 	"gopkg.in/yaml.v3"
 )
 
@@ -130,6 +131,77 @@ func TestLoadMigratesLegacyCaddyBin(t *testing.T) {
 				t.Fatalf("迁移结果未持久化:\n%s", persisted)
 			}
 		})
+	}
+}
+
+func TestLoadMigratesLegacyRouteModeFromDisk(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Sites = []sites.Site{{Domain: "legacy.example.com", Web: sites.Web{Type: sites.WebStatic, Root: "/srv/legacy"}}}
+	if err := os.MkdirAll(cfg.Caddy.SitesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snippet := "legacy.example.com {\n\troute {\n\t\troot * /srv/legacy\n\t\tfile_server\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(cfg.Caddy.SitesDir, "legacy.example.com.caddy"), []byte(snippet), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyLines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) != "use_route: false" {
+			legacyLines = append(legacyLines, line)
+		}
+	}
+	data = []byte(strings.Join(legacyLines, "\n"))
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Sites) != 1 || !loaded.Sites[0].UseRoute {
+		t.Fatalf("legacy disk route was not migrated: %+v", loaded.Sites)
+	}
+	persisted, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "use_route: true") {
+		t.Fatalf("migrated route mode was not persisted:\n%s", persisted)
+	}
+}
+
+func TestLoadKeepsExplicitRouteFalse(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Sites = []sites.Site{{
+		Domain: "explicit.example.com", UseRoute: false, RouteExplicit: true,
+		Web: sites.Web{Type: sites.WebStatic, Root: "/srv/explicit"},
+	}}
+	if err := os.MkdirAll(cfg.Caddy.SitesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	snippet := "explicit.example.com {\n\troute {\n\t\troot * /srv/explicit\n\t\tfile_server\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(cfg.Caddy.SitesDir, "explicit.example.com.caddy"), []byte(snippet), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Sites[0].UseRoute {
+		t.Fatal("explicit false was overwritten from disk")
 	}
 }
 

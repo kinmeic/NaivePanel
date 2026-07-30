@@ -82,7 +82,8 @@ ok "配置确认: 域名=$DOMAIN 路径=$BASE_PATH 账号=$ADMIN_USER"
 # ---------- 2. 基础依赖 ----------
 info "安装基础依赖..."
 apt-get update -qq
-apt-get install -y -qq curl wget tar gnupg lsb-release ca-certificates debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq curl wget tar cron gnupg lsb-release ca-certificates debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+systemctl enable --now cron >/dev/null 2>&1 || true
 ok "基础依赖就绪"
 
 # ---------- 3. 安装 Go ----------
@@ -264,6 +265,7 @@ info "生成初始 Caddy 配置..."
 cat > /etc/caddy/Caddyfile <<EOF
 {
 	email admin@$DOMAIN
+	order forward_proxy before file_server
 }
 
 import $CADDY_SITES_DIR/*.caddy
@@ -271,18 +273,16 @@ EOF
 
 cat > "$CADDY_SITES_DIR/$DOMAIN.caddy" <<EOF
 :443, $DOMAIN {
-	route {
-		handle $BASE_PATH/* {
-			reverse_proxy 127.0.0.1:9000 {
-				header_up X-NaivePanel-Key $PROXY_TOKEN
-			}
+	handle $BASE_PATH/* {
+		reverse_proxy 127.0.0.1:9000 {
+			header_up X-NaivePanel-Key $PROXY_TOKEN
 		}
-		redir $BASE_PATH $BASE_PATH/ 308
-
-		root * /var/www/$DOMAIN
-		encode gzip zstd
-		file_server
 	}
+	redir $BASE_PATH $BASE_PATH/ 308
+
+	root * /var/www/$DOMAIN
+	encode gzip zstd
+	file_server
 }
 EOF
 chmod 600 "$CADDY_SITES_DIR/$DOMAIN.caddy"

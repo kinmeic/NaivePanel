@@ -39,24 +39,27 @@
       {{else}}<span class="muted">-</span>{{end}}
     </td>
     <td>
-      {{if or .Site.ExtraBlocks .Site.SiteOptions .Site.ExtraDirectives .ParseNote}}
+      {{if or .Site.ExtraBlocks .Site.SiteOptions .Site.ExtraDirectives .Site.UseRoute .ParseNote}}
       <span class="note-tooltip" tabindex="0" aria-label="查看备注">
         {{icon "info"}}
         <span class="note-tooltip-content">
           {{if .Site.ExtraBlocks}}<span>{{len .Site.ExtraBlocks}} 个自定义块</span>{{end}}
-          {{if .Site.SiteOptions}}<span>包含 route 外站点选项</span>{{end}}
-          {{if .Site.ExtraDirectives}}<span>包含 route 内附加指令</span>{{end}}
+          {{if .Site.SiteOptions}}<span>包含站点级选项</span>{{end}}
+          {{if .Site.ExtraDirectives}}<span>包含附加 HTTP 指令</span>{{end}}
+          {{if .Site.UseRoute}}<span>使用 route 固定指令顺序</span>{{end}}
           {{if .ParseNote}}<span>未完全匹配：{{.ParseNote}}</span>{{end}}
         </span>
       </span>
       {{else}}<span class="muted">-</span>{{end}}
     </td>
     <td class="site-actions">
+      <div class="site-action-buttons">
       <a class="btn icon-btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit" title="编辑 {{.Site.Domain}}" aria-label="编辑 {{.Site.Domain}}">{{icon "pencil"}}</a>
       <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Site.Domain}}？">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
         <button type="submit" class="danger icon-btn" title="删除 {{.Site.Domain}}" aria-label="删除 {{.Site.Domain}}">{{icon "trash-2"}}</button>
       </form>
+      </div>
     </td>
   </tr>
   {{end}}

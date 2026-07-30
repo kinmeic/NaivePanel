@@ -213,12 +213,36 @@ func TestParseSiteOptionBeforeRoute(t *testing.T) {
 	if !got.ForwardProxy.Enabled || got.Web.Type != WebPHP || got.Web.Root != "/srv/example" {
 		t.Fatalf("route was not parsed structurally: %+v", got)
 	}
+	if !got.UseRoute {
+		t.Fatal("existing route wrapper was not preserved")
+	}
 	rendered, err := Render(got, PanelInfo{}, false, 1080)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rendered, "\ttls {\n\t\tdns cloudflare token\n\t\tresolvers 1.1.1.1\n\t}") {
 		t.Fatalf("tls option rendered indentation lost:\n%s", rendered)
+	}
+}
+
+func TestParseAndRenderPreserveNoRoute(t *testing.T) {
+	snippet := `example.com {
+	header X-Content-Type-Options nosniff
+	reverse_proxy 127.0.0.1:3000
+}`
+	got, err := Parse(snippet, "/manage-test", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UseRoute {
+		t.Fatal("ordinary site must not acquire route")
+	}
+	rendered, err := Render(got, PanelInfo{}, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, "\troute {") {
+		t.Fatalf("route was unexpectedly introduced:\n%s", rendered)
 	}
 }
 
@@ -361,5 +385,15 @@ func TestStripCommentQuoted(t *testing.T) {
 	}
 	if got := stripComment("# full line"); got != "" {
 		t.Fatalf("full-line comment not stripped: %q", got)
+	}
+}
+
+func TestContainsDirective(t *testing.T) {
+	snippet := "example.com {\n\t# forward_proxy {\n\trespond \"forward_proxy\"\n}\n"
+	if ContainsDirective(snippet, "forward_proxy") {
+		t.Fatal("comment or argument was mistaken for a directive")
+	}
+	if !ContainsDirective("example.com {\n\tforward_proxy {\n\t}\n}\n", "forward_proxy") {
+		t.Fatal("active directive was not detected")
 	}
 }

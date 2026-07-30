@@ -111,7 +111,14 @@ func (m *Manager) renderAll(importDir string) (map[string]string, error) {
 		}
 		m.mu.Unlock()
 	}
-	out["Caddyfile"] = sites.RenderMainPreserve(head, "admin@"+m.cfg.Domain, importDir)
+	needsForwardProxyOrder := false
+	for rel, content := range out {
+		if strings.HasPrefix(rel, "sites/") && sites.ContainsDirective(content, "forward_proxy") {
+			needsForwardProxyOrder = true
+			break
+		}
+	}
+	out["Caddyfile"] = sites.RenderMainPreserve(head, "admin@"+m.cfg.Domain, importDir, needsForwardProxyOrder)
 	return out, nil
 }
 

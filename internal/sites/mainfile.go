@@ -70,10 +70,8 @@ func consumeTopBlock(lines []string, i int) ([]string, int) {
 
 // RenderMainPreserve renders the main Caddyfile, keeping the operator's
 // original head content (global options, comments, named snippets, other
-// imports) and making sure exactly one import line for sitesDir exists. If
-// the head has no global options block, one carrying the panel email is
-// synthesized.
-func RenderMainPreserve(head, email, sitesDir string) string {
+// imports) and making sure exactly one import line for sitesDir exists.
+func RenderMainPreserve(head, email, sitesDir string, needsForwardProxyOrder bool) string {
 	importLine := "import " + filepath.Join(sitesDir, "*.caddy")
 	var kept []string
 	for _, l := range strings.Split(head, "\n") {
@@ -84,14 +82,53 @@ func RenderMainPreserve(head, email, sitesDir string) string {
 	}
 	body := strings.TrimSpace(strings.Join(kept, "\n"))
 	if !hasGlobalBlock(body) {
-		global := "{\n\temail " + token(email) + "\n}"
+		global := "{\n\temail " + token(email)
+		if needsForwardProxyOrder {
+			global += "\n\torder forward_proxy before file_server"
+		}
+		global += "\n}"
 		if body == "" {
 			body = global
 		} else {
 			body = global + "\n\n" + body
 		}
+	} else if needsForwardProxyOrder {
+		body = ensureForwardProxyOrder(body)
 	}
 	return body + "\n\n" + importLine + "\n"
+}
+
+// ensureForwardProxyOrder adds the ordering recommended by the NaiveProxy
+// project without replacing an operator's existing forward_proxy order.
+func ensureForwardProxyOrder(head string) string {
+	lines := strings.Split(head, "\n")
+	for _, line := range lines {
+		fields, err := splitTokens(stripComment(line))
+		if err == nil && len(fields) >= 2 && fields[0] == "order" && fields[1] == "forward_proxy" {
+			return head
+		}
+	}
+
+	inGlobal := false
+	depth := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !inGlobal {
+			if trimmed != "{" {
+				continue
+			}
+			inGlobal = true
+			depth = 1
+			continue
+		}
+		nextDepth := depth + strings.Count(line, "{") - strings.Count(line, "}")
+		if nextDepth == 0 {
+			lines = append(lines[:i], append([]string{"\torder forward_proxy before file_server"}, lines[i:]...)...)
+			return strings.Join(lines, "\n")
+		}
+		depth = nextDepth
+	}
+	return head
 }
 
 // hasGlobalBlock reports whether the head's first meaningful line opens a

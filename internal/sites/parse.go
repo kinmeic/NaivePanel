@@ -24,9 +24,8 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 	}
 	st := &Site{Domain: domain}
 
-	// Panel-rendered sites use route { }, but ordinary hand-written
-	// Caddyfiles commonly put handlers directly in the site block. Accept
-	// both forms so importing a normal Caddyfile remains structured.
+	// Accept both route-wrapped and direct handlers. The distinction is kept
+	// in the model so an edit never changes Caddy's execution-order semantics.
 	line, ok := p.next()
 	if !ok {
 		return nil, fmt.Errorf("站点块为空或未闭合")
@@ -51,6 +50,8 @@ func Parse(snippet, basePath string, socksPort int) (*Site, error) {
 		}
 		wrappedRoute = line == "route {"
 	}
+	st.UseRoute = wrappedRoute
+	st.RouteExplicit = true
 
 	var root, phpSock, proxyTo string
 	fileServer := false
@@ -211,6 +212,19 @@ func appendDirective(current, directive string) string {
 		return directive
 	}
 	return strings.TrimSpace(current) + "\n\n" + directive
+}
+
+// ContainsDirective reports whether a Caddyfile snippet contains an active
+// directive with the given name. Comments and quoted tokens are handled by
+// the same lexer used by the structured importer.
+func ContainsDirective(snippet, name string) bool {
+	for _, line := range strings.Split(snippet, "\n") {
+		tokens, err := splitTokens(stripComment(line))
+		if err == nil && len(tokens) > 0 && tokens[0] == name {
+			return true
+		}
+	}
+	return false
 }
 
 // DomainFromHeader extracts the site address (domain) from a snippet's first

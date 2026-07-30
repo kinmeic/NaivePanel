@@ -105,10 +105,11 @@ func TestSplitMainEmpty(t *testing.T) {
 
 func TestRenderMainPreserveKeepsHead(t *testing.T) {
 	head, _ := SplitMain(sampleMain)
-	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", true)
 	for _, want := range []string{
 		"email admin@example.com", // original global block wins
 		"(common)",
+		"order forward_proxy before file_server",
 		"import /etc/caddy/sites/*.caddy",
 	} {
 		if !strings.Contains(out, want) {
@@ -124,8 +125,8 @@ func TestRenderMainPreserveKeepsHead(t *testing.T) {
 }
 
 func TestRenderMainPreserveEmptyHead(t *testing.T) {
-	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites")
-	if !strings.HasPrefix(out, "{\n\temail admin@panel.example\n}") {
+	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites", true)
+	if !strings.HasPrefix(out, "{\n\temail admin@panel.example\n\torder forward_proxy before file_server\n}") {
 		t.Fatalf("expected synthesized global block:\n%s", out)
 	}
 	if !strings.Contains(out, "import /etc/caddy/sites/*.caddy") {
@@ -133,9 +134,24 @@ func TestRenderMainPreserveEmptyHead(t *testing.T) {
 	}
 }
 
+func TestRenderMainPreserveWithoutPluginDirective(t *testing.T) {
+	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites", false)
+	if strings.Contains(out, "order forward_proxy") {
+		t.Fatalf("ordinary Caddy config gained plugin-only order:\n%s", out)
+	}
+}
+
+func TestRenderMainPreserveKeepsExistingForwardProxyOrder(t *testing.T) {
+	head := "{\n\torder forward_proxy first\n}"
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", true)
+	if strings.Count(out, "order forward_proxy") != 1 || !strings.Contains(out, "order forward_proxy first") {
+		t.Fatalf("existing order was replaced or duplicated:\n%s", out)
+	}
+}
+
 func TestRenderMainPreserveDedupesImport(t *testing.T) {
 	head := "{\n\temail a@b.c\n}\n\nimport /etc/caddy/sites/*.caddy"
-	out := RenderMainPreserve(head, "x@y.z", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "x@y.z", "/etc/caddy/sites", false)
 	if strings.Count(out, "import /etc/caddy/sites/*.caddy") != 1 {
 		t.Fatalf("duplicate import lines:\n%s", out)
 	}
@@ -145,7 +161,7 @@ func TestRenderMainPreserveDedupesImport(t *testing.T) {
 // available for migration and produce a main file that parses again.
 func TestSplitMainRoundTrip(t *testing.T) {
 	head, list := SplitMain(sampleMain)
-	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", false)
 	head2, list2 := SplitMain(out)
 	if len(list2) != 0 {
 		t.Fatalf("rendered main file should have no inline sites, got %d", len(list2))

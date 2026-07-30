@@ -2,20 +2,14 @@
 <h1>BypassCore 配置编辑</h1>
 {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
 <p class="muted">保存时将执行：JSON 校验 → bypasscore -check-config → 备份 → 落盘 → 控制面热重载（必要时重启服务）。</p>
-<form method="post" action="{{.Base}}/bypasscore/config" id="bypass-config-form">
+<form method="post" action="{{.Base}}/bypasscore/config" id="bypass-json-form">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <div class="tabs json-editor-tabs">
-    <button type="button" class="btn" id="json-structured-tab">{{icon "route"}}结构化编辑</button>
-    <button type="button" class="btn active" id="json-raw-tab">{{icon "file-cog"}}高级 JSON</button>
+  <div id="json-format-error" class="error hidden"></div>
+  <div class="list-head">
+    <span class="muted">直接编辑完整 JSON 文件；格式化操作不会提交或保存配置。</span>
+    <button type="button" class="btn" id="json-format-btn">{{icon "file-cog"}}格式化 JSON</button>
   </div>
-  <div id="json-editor-error" class="error hidden"></div>
-  <div id="json-structured-panel" class="hidden">
-    <div class="notice">对象和数组可以展开、折叠、增删；字段类型可在每一项右侧切换。未知字段也会保留。</div>
-    <div id="json-tree" class="json-tree"></div>
-  </div>
-  <div id="json-raw-panel">
-    <textarea id="bypass-config-raw" name="config" rows="32" class="mono wide">{{.Data.Config}}</textarea>
-  </div>
+  <textarea id="bypass-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
   <div class="actions">
     <button type="submit" class="primary">{{icon "check"}}校验并生效</button>
     <a class="btn" href="{{.Base}}/bypasscore">{{icon "arrow-left"}}返回</a>

@@ -28,9 +28,11 @@ func parseSiteForm(r *http.Request) (*sites.Site, error) {
 		return nil, err
 	}
 	st := &sites.Site{
-		Domain:  strings.TrimSpace(r.FormValue("domain")),
-		RawMode: r.FormValue("raw_mode") == "on",
-		Raw:     r.FormValue("raw"),
+		Domain:        strings.TrimSpace(r.FormValue("domain")),
+		UseRoute:      r.FormValue("use_route") == "on",
+		RouteExplicit: true,
+		RawMode:       r.FormValue("raw_mode") == "on",
+		Raw:           r.FormValue("raw"),
 	}
 	st.ForwardProxy.Enabled = r.FormValue("fp_enabled") == "on"
 	st.ForwardProxy.UseBypassCore = r.FormValue("fp_bypass") == "on"

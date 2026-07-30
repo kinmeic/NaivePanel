@@ -4,6 +4,8 @@ package sites
 import (
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Web site types.
@@ -58,8 +60,30 @@ type Site struct {
 	ExtraBlocks     []ExtraBlock `yaml:"extra_blocks"`
 	SiteOptions     string       `yaml:"site_options,omitempty"`
 	ExtraDirectives string       `yaml:"extra_directives,omitempty"`
+	UseRoute        bool         `yaml:"use_route"`
+	RouteExplicit   bool         `yaml:"-"`
 	RawMode         bool         `yaml:"raw_mode"`
 	Raw             string       `yaml:"raw"`
+}
+
+// UnmarshalYAML records whether use_route was present, allowing Config.Load
+// to distinguish legacy files from a user's explicit false selection.
+func (s *Site) UnmarshalYAML(value *yaml.Node) error {
+	type plain Site
+	var decoded plain
+	if err := value.Decode(&decoded); err != nil {
+		return err
+	}
+	*s = Site(decoded)
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if value.Content[i].Value == "use_route" {
+				s.RouteExplicit = true
+				break
+			}
+		}
+	}
+	return nil
 }
 
 // ProxyTokenHeader is the shared-secret header Caddy injects when reverse
@@ -211,10 +235,14 @@ func Render(s *Site, panel PanelInfo, hostSite bool, socksPort int) (string, err
 		indent(&b, 1, strings.TrimSpace(s.SiteOptions))
 		b.WriteString("\n")
 	}
-	b.WriteString("\troute {\n")
+	handlerIndent := 1
+	if s.UseRoute {
+		b.WriteString("\troute {\n")
+		handlerIndent = 2
+	}
 
 	if hostSite {
-		renderPanelBlock(&b, panel, 2)
+		renderPanelBlock(&b, panel, handlerIndent)
 	}
 
 	for _, eb := range s.ExtraBlocks {
@@ -222,52 +250,55 @@ func Render(s *Site, panel PanelInfo, hostSite bool, socksPort int) (string, err
 		if eb.Matcher != "" {
 			open = eb.Type + " " + token(eb.Matcher) + " {"
 		}
-		indent(&b, 2, open)
-		indent(&b, 3, strings.TrimSpace(eb.Content))
-		indent(&b, 2, "}")
+		indent(&b, handlerIndent, open)
+		indent(&b, handlerIndent+1, strings.TrimSpace(eb.Content))
+		indent(&b, handlerIndent, "}")
 		b.WriteString("\n")
 	}
 
 	if strings.TrimSpace(s.ExtraDirectives) != "" {
-		indent(&b, 2, strings.TrimSpace(s.ExtraDirectives))
+		indent(&b, handlerIndent, strings.TrimSpace(s.ExtraDirectives))
 		b.WriteString("\n")
 	}
 
 	if s.ForwardProxy.Enabled {
-		indent(&b, 2, "forward_proxy {")
+		indent(&b, handlerIndent, "forward_proxy {")
 		for _, a := range s.ForwardProxy.Accounts {
-			indent(&b, 3, "basic_auth "+token(a.User)+" "+token(a.Pass))
+			indent(&b, handlerIndent+1, "basic_auth "+token(a.User)+" "+token(a.Pass))
 		}
 		// Fixed hardening directives, never shown in the UI.
-		indent(&b, 3, "hide_ip")
-		indent(&b, 3, "hide_via")
-		indent(&b, 3, "probe_resistance")
+		indent(&b, handlerIndent+1, "hide_ip")
+		indent(&b, handlerIndent+1, "hide_via")
+		indent(&b, handlerIndent+1, "probe_resistance")
 		upstream := s.ForwardProxy.Upstream
 		if s.ForwardProxy.UseBypassCore {
 			upstream = fmt.Sprintf("socks5://127.0.0.1:%d", socksPort)
 		}
 		if upstream != "" {
-			indent(&b, 3, "upstream "+token(upstream))
+			indent(&b, handlerIndent+1, "upstream "+token(upstream))
 		}
-		indent(&b, 2, "}")
+		indent(&b, handlerIndent, "}")
 		b.WriteString("\n")
 	}
 
 	switch s.Web.Type {
 	case WebStatic, WebPHP:
-		indent(&b, 2, "root * "+token(s.Web.Root))
-		indent(&b, 2, "encode gzip zstd")
+		indent(&b, handlerIndent, "root * "+token(s.Web.Root))
+		indent(&b, handlerIndent, "encode gzip zstd")
 		if s.Web.Type == WebPHP {
-			indent(&b, 2, "php_fastcgi "+token(s.Web.PHPSocket))
+			indent(&b, handlerIndent, "php_fastcgi "+token(s.Web.PHPSocket))
 		}
-		indent(&b, 2, "file_server")
+		indent(&b, handlerIndent, "file_server")
 	case WebReverseProxy:
-		indent(&b, 2, "reverse_proxy "+token(s.Web.ProxyTo))
+		indent(&b, handlerIndent, "reverse_proxy "+token(s.Web.ProxyTo))
 	case WebNone:
 		// no web part
 	}
 
-	b.WriteString("\t}\n}\n")
+	if s.UseRoute {
+		b.WriteString("\t}\n")
+	}
+	b.WriteString("}\n")
 	return b.String(), nil
 }
 

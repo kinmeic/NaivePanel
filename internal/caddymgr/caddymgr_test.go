@@ -121,6 +121,34 @@ func TestRenderAllModelWinsOverInline(t *testing.T) {
 	_ = dir
 }
 
+func TestRenderAllAddsForwardProxyOrderOnlyWhenNeeded(t *testing.T) {
+	ordinary := sites.Site{Domain: "ordinary.example.com", Web: sites.Web{Type: sites.WebStatic, Root: "/srv/ordinary"}}
+	manager, _ := testManager(t, "{\n\temail admin@example.com\n}\n", ordinary)
+	files, err := manager.RenderAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(files["Caddyfile"], "order forward_proxy") {
+		t.Fatalf("ordinary config gained plugin-only order:\n%s", files["Caddyfile"])
+	}
+
+	proxy := sites.Site{
+		Domain: "proxy.example.com",
+		ForwardProxy: sites.ForwardProxy{
+			Enabled: true, Accounts: []sites.Account{{User: "user", Pass: "pass"}},
+		},
+		Web: sites.Web{Type: sites.WebNone},
+	}
+	manager, _ = testManager(t, "{\n\temail admin@example.com\n}\n", proxy)
+	files, err = manager.RenderAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(files["Caddyfile"], "order forward_proxy before file_server") {
+		t.Fatalf("forward proxy order missing:\n%s", files["Caddyfile"])
+	}
+}
+
 // DropDomain skips inline migration and prunes the snippet on Apply.
 func TestDropDomain(t *testing.T) {
 	m, dir := testManager(t, inlineMain)

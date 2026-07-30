@@ -31,13 +31,22 @@
 
   <div id="structured-section" {{if $s.RawMode}}class="hidden"{{end}}>
   <fieldset>
-    <legend>站点级选项（route 外）</legend>
-    <p class="muted">直接位于站点块中，适用于 tls / log / bind / handle_errors；嵌套缩进会原样保留。</p>
+    <legend>站点级选项</legend>
+    <p class="muted">始终直接位于站点块中，适用于 tls / log / bind / handle_errors；嵌套缩进会原样保留。</p>
     <textarea name="site_options" rows="6" class="mono" placeholder="tls {&#10;&#9;dns cloudflare TOKEN&#10;}">{{$s.SiteOptions}}</textarea>
   </fieldset>
 
-  <section class="caddy-route-block">
-  <div class="caddy-route-brace"><code>route {</code><span>以下 HTTP 处理器按显示顺序位于 route 闭包内</span></div>
+  <fieldset class="route-setting">
+    <legend>HTTP 指令排序</legend>
+    <label class="check">
+      <input type="checkbox" name="use_route" id="use-route-toggle" {{if $s.UseRoute}}checked{{end}}>
+      使用 <code>route</code> 固定下方 HTTP 处理器的执行顺序
+    </label>
+    <p class="muted">通常应保持关闭，让 Caddy 按内置指令顺序自动排序；面板会在全局配置中维护 forward_proxy 的推荐顺序。仅在原配置已有 route，或确实需要逐行控制处理链时启用。</p>
+  </fieldset>
+
+  <section id="caddy-handlers-block" class="{{if $s.UseRoute}}caddy-route-block{{else}}caddy-directives-block{{end}}">
+  <div class="caddy-route-brace {{if not $s.UseRoute}}hidden{{end}}"><code>route {</code><span>以下 HTTP 处理器严格按显示顺序执行</span></div>
   <div class="caddy-route-body">
   <fieldset>
     <legend>forward_proxy（NaiveProxy）</legend>
@@ -100,14 +109,14 @@
   </fieldset>
 
   <fieldset>
-    <legend>route 内附加指令</legend>
-    <p class="muted">从现有 Caddyfile 识别出的其他 HTTP 指令会保留在这里。</p>
+    <legend>附加 HTTP 指令</legend>
+    <p class="muted">从现有 Caddyfile 识别出的其他 HTTP 指令会保留在这里；启用 route 时它们位于 route 内，否则直接位于站点块中。</p>
     <label>附加 HTTP 指令
       <textarea name="extra_directives" rows="7" class="mono" placeholder="header X-Content-Type-Options nosniff">{{$s.ExtraDirectives}}</textarea>
     </label>
   </fieldset>
   </div>
-  <div class="caddy-route-brace caddy-route-close"><code>}</code></div>
+  <div class="caddy-route-brace caddy-route-close {{if not $s.UseRoute}}hidden{{end}}"><code>}</code></div>
   </section>
   </div>
 

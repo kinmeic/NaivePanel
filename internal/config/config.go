@@ -97,6 +97,21 @@ type Config struct {
 	path string
 }
 
+// SourcePath returns the absolute path this configuration was loaded from.
+// Callers use its directory for panel-owned auxiliary state.
+func (c *Config) SourcePath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	path := c.path
+	if path == "" {
+		path = DefaultConfigPath
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return filepath.Clean(path)
+}
+
 // SetDefaults fills zero-valued fields with the standard layout.
 func (c *Config) SetDefaults() {
 	if c.Listen == "" {
@@ -239,6 +254,9 @@ func Load(path string) (*Config, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
+	if c.migrateSiteRouteModes() {
+		migrated = true
+	}
 	if c.ProxyToken == "" {
 		// Older configs lack the HTTPS gate token; generate and persist.
 		c.ProxyToken = RandomToken()
@@ -250,6 +268,41 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	return &c, nil
+}
+
+// migrateSiteRouteModes upgrades configs written before use_route existed.
+// It reads the live snippet only when the YAML field was absent; an explicit
+// false selection in a current config is never overridden.
+func (c *Config) migrateSiteRouteModes() bool {
+	legacy := false
+	mainSites := map[string]string{}
+	mainLoaded := false
+	for i := range c.Sites {
+		if c.Sites[i].RouteExplicit {
+			continue
+		}
+		legacy = true
+		content, err := os.ReadFile(filepath.Join(c.Caddy.SitesDir, c.Sites[i].Domain+".caddy"))
+		if err != nil && !mainLoaded {
+			mainLoaded = true
+			if main, readErr := os.ReadFile(c.Caddy.MainFile); readErr == nil {
+				_, blocks := sites.SplitMain(string(main))
+				for _, block := range blocks {
+					mainSites[block.Domain] = block.Content
+				}
+			}
+		}
+		if err != nil {
+			content = []byte(mainSites[c.Sites[i].Domain])
+		}
+		if len(content) > 0 {
+			if parsed, parseErr := sites.Parse(string(content), c.BasePath, c.BypassCore.SocksPort); parseErr == nil {
+				c.Sites[i].UseRoute = parsed.UseRoute
+			}
+		}
+		c.Sites[i].RouteExplicit = true
+	}
+	return legacy
 }
 
 // migrateLegacyValues upgrades only values emitted or commonly copied from
