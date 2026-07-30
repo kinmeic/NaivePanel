@@ -67,6 +67,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 
 func (s *Server) parseTemplates() error {
 	funcs := template.FuncMap{
+		"icon": icon,
 		"prettyJSON": func(v any) string {
 			b, err := json.MarshalIndent(v, "", "  ")
 			if err != nil {
@@ -92,7 +93,9 @@ func (s *Server) parseTemplates() error {
 		}
 		page := strings.TrimSuffix(name, ".html")
 		files := []string{"ui/templates/" + name}
-		if page != "login" && page != "totp" {
+		// login/totp are bare pages; "_list" pages are layout-less fragments
+		// fetched asynchronously into a parent page.
+		if page != "login" && page != "totp" && !strings.HasSuffix(page, "_list") {
 			files = append([]string{"ui/templates/layout.html"}, files...)
 		}
 		t, err := template.New(page).Funcs(funcs).ParseFS(uiFS, files...)
@@ -124,17 +127,21 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET "+bp+"/{$}", s.protect(s.handleDashboard))
 
-	s.mux.HandleFunc("GET "+bp+"/sites", s.protect(s.handleSites))
+	s.mux.HandleFunc("GET "+bp+"/sites", s.protect(s.redirectTo("/caddy/sites")))
 	s.mux.HandleFunc("GET "+bp+"/sites/new", s.protect(s.handleSiteNew))
 	s.mux.HandleFunc("POST "+bp+"/sites/new", s.protect(s.handleSiteCreate))
 	s.mux.HandleFunc("GET "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteEdit))
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteUpdate))
 	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/delete", s.protect(s.handleSiteDelete))
 	s.mux.HandleFunc("POST "+bp+"/sites/preview-render", s.protect(s.handleSitePreviewRender))
-	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/sync-disk", s.protect(s.handleSiteSyncDisk))
 
-	s.mux.HandleFunc("GET "+bp+"/caddy/preview", s.protect(s.handleCaddyPreview))
+	s.mux.HandleFunc("GET "+bp+"/caddy", s.protect(s.redirectTo("/caddy/sites")))
+	s.mux.HandleFunc("GET "+bp+"/caddy/sites", s.protect(s.handleCaddySites))
+	s.mux.HandleFunc("GET "+bp+"/caddy/sites/list", s.protect(s.handleSiteList))
+	s.mux.HandleFunc("GET "+bp+"/caddy/config", s.protect(s.handleCaddyConfig))
+	s.mux.HandleFunc("GET "+bp+"/caddy/preview", s.protect(s.redirectTo("/caddy/config")))
 	s.mux.HandleFunc("POST "+bp+"/caddy/reload", s.protect(s.handleCaddyReload))
+	s.mux.HandleFunc("POST "+bp+"/caddy/service", s.protect(s.handleCaddyService))
 
 	s.mux.HandleFunc("GET "+bp+"/bypasscore", s.protect(s.handleBypass))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/install", s.protect(s.handleBypassInstall))
@@ -143,6 +150,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
 
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
+	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
 	s.mux.HandleFunc("POST "+bp+"/geo/update", s.protect(s.handleGeoUpdate))
 	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleGeoSettings))
 
@@ -217,8 +225,7 @@ func (s *Server) session(r *http.Request) *auth.Session {
 }
 
 // render executes a page template.
-func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {
-	t := s.pages[page]
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {	t := s.pages[page]
 	if t == nil {
 		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
 		return
@@ -245,6 +252,38 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title stri
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	buf.WriteTo(w)
+}
+
+// renderFrag executes a layout-less fragment template (async list content).
+// It deliberately does not consume the flash cookie — flashes belong to
+// full page loads.
+func (s *Server) renderFrag(w http.ResponseWriter, r *http.Request, page string, data any) {
+	t := s.pages[page]
+	if t == nil {
+		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
+		return
+	}
+	d := pageData{Base: s.Cfg.BasePath, Data: data}
+	if sess := s.session(r); sess != nil {
+		d.CSRF = sess.CSRF
+		d.User = sess.User
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, page+".html", d); err != nil {
+		http.Error(w, "模板渲染失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	buf.WriteTo(w)
+}
+
+// redirectTo returns a handler that permanently redirects to a base-relative
+// path (route moves after the Caddy page merge).
+func (s *Server) redirectTo(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, s.Cfg.BasePath+path, http.StatusMovedPermanently)
+	}
 }
 
 // maxFlashLen keeps escaped flash messages well under the browser cookie

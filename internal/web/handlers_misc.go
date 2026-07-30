@@ -19,6 +19,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"Domain":        s.Cfg.Domain,
 		"Version":       s.Version,
 		"BasePath":      s.Cfg.BasePath,
+		"Listen":        s.Cfg.Listen,
 		"HostSite":      s.Cfg.GetHostSite(),
 		"SiteCount":     len(s.Cfg.SitesSnapshot()),
 		"CaddyActive":   sysd.IsActive("caddy"),
@@ -30,14 +31,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"TOTPEnabled":   totpOn,
 	}
 	s.render(w, r, "dashboard", "仪表盘", data)
-}
-
-// handleCaddyPreview shows the real on-disk Caddy configuration — the main
-// Caddyfile plus every site snippet, i.e. exactly what Caddy loads.
-func (s *Server) handleCaddyPreview(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "caddy_preview", "Caddy 配置预览", map[string]any{
-		"Content": s.Caddy.LivePreview(),
-	})
 }
 
 // handleCaddyReload reloads Caddy with the live on-disk config.

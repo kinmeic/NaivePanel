@@ -70,35 +70,3 @@ func (m *Manager) LivePreview() string {
 	}
 	return b.String()
 }
-
-// NormalizeSnippet normalizes a snippet for drift comparison: trims every
-// line and drops empty lines.
-func NormalizeSnippet(s string) string {
-	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines))
-	for _, l := range lines {
-		if l = strings.TrimSpace(l); l != "" {
-			out = append(out, l)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-// SiteDrift reports whether a managed site's on-disk snippet differs from
-// what the panel model would render. missing is true when the site has no
-// snippet on disk at all.
-func (m *Manager) SiteDrift(domain string) (drift, missing bool) {
-	st, ok := m.cfg.GetSite(domain)
-	if !ok {
-		return false, false
-	}
-	ds, found := m.ReadDiskSite(domain)
-	if !found {
-		return true, true
-	}
-	rendered, err := m.RenderSite(&st)
-	if err != nil {
-		return false, false
-	}
-	return NormalizeSnippet(ds.Content) != NormalizeSnippet(rendered), false
-}

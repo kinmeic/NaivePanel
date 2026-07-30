@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>服务日志</h1>
+<p class="muted">来自 systemd journal 的服务运行日志（最新在最后）。</p>
+<div class="logbar">
+  <a class="btn {{if eq .Data.Service "caddy"}}active{{end}}" href="{{.Base}}/logs?service=caddy&lines={{.Data.Lines}}">{{icon "file-cog"}}Caddy</a>
+  <a class="btn {{if eq .Data.Service "bypasscore"}}active{{end}}" href="{{.Base}}/logs?service=bypasscore&lines={{.Data.Lines}}">{{icon "route"}}BypassCore</a>
+  <span class="muted">行数：</span>
+  <a class="btn {{if eq .Data.Lines 100}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=100">100</a>
+  <a class="btn {{if eq .Data.Lines 200}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=200">200</a>
+  <a class="btn {{if eq .Data.Lines 500}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=500">500</a>
+  <a class="btn {{if eq .Data.Lines 1000}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=1000">1000</a>
+  <a class="btn" href="{{.Base}}/logs?service={{.Data.Service}}&lines={{.Data.Lines}}">{{icon "refresh-cw"}}刷新</a>
+</div>
+{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+{{if .Data.Content}}<pre class="preview logs">{{.Data.Content}}</pre>{{end}}
+{{end}}

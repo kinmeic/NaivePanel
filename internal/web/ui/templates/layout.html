@@ -9,18 +9,18 @@
 <body>
 <div class="shell">
 <aside class="sidebar">
-  <a class="brand" href="{{.Base}}/"><i data-lucide="server"></i><span>NaivePanel</span></a>
+  <a class="brand" href="{{.Base}}/">{{icon "server"}}<span>NaivePanel</span></a>
   <nav>
-    <a href="{{.Base}}/" class="{{if eq .Title "仪表盘"}}active{{end}}"><i data-lucide="gauge"></i><span>仪表盘</span></a>
-    <a href="{{.Base}}/sites" class="{{if eq .Title "站点管理"}}active{{end}}"><i data-lucide="globe"></i><span>站点</span></a>
-    <a href="{{.Base}}/caddy/preview" class="{{if eq .Title "Caddy 配置预览"}}active{{end}}"><i data-lucide="file-cog"></i><span>Caddy 配置</span></a>
-    <a href="{{.Base}}/bypasscore" class="{{if eq .Title "BypassCore"}}active{{end}}"><i data-lucide="route"></i><span>BypassCore</span></a>
-    <a href="{{.Base}}/geo" class="{{if eq .Title "Geo 数据文件"}}active{{end}}"><i data-lucide="map"></i><span>Geo 数据</span></a>
-    <a href="{{.Base}}/settings" class="{{if eq .Title "设置"}}active{{end}}"><i data-lucide="settings"></i><span>设置</span></a>
+    <a href="{{.Base}}/" class="{{if eq .Title "仪表盘"}}active{{end}}">{{icon "gauge"}}<span>仪表盘</span></a>
+    <a href="{{.Base}}/caddy" class="{{if eq .Title "Caddy"}}active{{end}}">{{icon "file-cog"}}<span>Caddy</span></a>
+    <a href="{{.Base}}/bypasscore" class="{{if eq .Title "BypassCore"}}active{{end}}">{{icon "route"}}<span>BypassCore</span></a>
+    <a href="{{.Base}}/geo" class="{{if eq .Title "Geo 数据文件"}}active{{end}}">{{icon "map"}}<span>Geo 数据</span></a>
+    <a href="{{.Base}}/logs" class="{{if eq .Title "服务日志"}}active{{end}}">{{icon "scroll-text"}}<span>日志</span></a>
+    <a href="{{.Base}}/settings" class="{{if eq .Title "设置"}}active{{end}}">{{icon "settings"}}<span>设置</span></a>
   </nav>
   <form method="post" action="{{.Base}}/logout" class="logout">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
-    <button type="submit"><i data-lucide="log-out"></i><span>退出</span></button>
+    <button type="submit">{{icon "log-out"}}<span>退出</span></button>
   </form>
 </aside>
 <main>
@@ -28,7 +28,6 @@
 {{template "content" .}}
 </main>
 </div>
-<script src="{{.Base}}/static/lucide.min.js"></script>
 <script src="{{.Base}}/static/app.js"></script>
 </body>
 </html>{{end}}

@@ -1,9 +1,0 @@
-{{define "content"}}
-<h1>Caddy 配置预览</h1>
-<p class="muted">当前磁盘上的真实 Caddyfile 与站点片段，即 Caddy 实际加载的内容。</p>
-<form method="post" action="{{.Base}}/caddy/reload" class="inline-block">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit" class="btn" data-confirm="确定要用线上配置文件重载 Caddy？"><i data-lucide="refresh-cw"></i>重载 Caddy</button>
-</form>
-<pre class="preview">{{.Data.Content}}</pre>
-{{end}}

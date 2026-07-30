@@ -105,21 +105,26 @@ func (s *Server) applySiteChange(st *sites.Site, existed bool) error {
 	return nil
 }
 
-// siteRow pairs a managed site with its on-disk drift status.
+// siteRow pairs a disk-parsed site with its source file name.
 type siteRow struct {
-	Site    sites.Site
-	Drift   bool // disk snippet differs from model render
-	Missing bool // disk snippet is gone
+	Site     sites.Site
+	FileName string
 }
 
-func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
-	managed := s.Cfg.SitesSnapshot()
-	rows := make([]siteRow, 0, len(managed))
-	for _, st := range managed {
-		drift, missing := s.Caddy.SiteDrift(st.Domain)
-		rows = append(rows, siteRow{Site: st, Drift: drift, Missing: missing})
+// handleSiteList is the async fragment behind the Caddy page's sites tab:
+// every row is parsed fresh from the on-disk Caddyfile snippets, so the list
+// always reflects what Caddy actually loads. Snippets that don't match the
+// panel's rendered shape are shown in raw (高级) mode.
+func (s *Server) handleSiteList(w http.ResponseWriter, r *http.Request) {
+	var rows []siteRow
+	for _, ds := range s.Caddy.ListDiskSites() {
+		st, _, err := s.importSiteFromDisk(ds.Content)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, siteRow{Site: *st, FileName: ds.FileName})
 	}
-	s.render(w, r, "sites", "站点管理", map[string]any{
+	s.renderFrag(w, r, "sites_list", map[string]any{
 		"Rows":     rows,
 		"HostSite": s.Cfg.GetHostSite(),
 	})
@@ -146,26 +151,37 @@ func (s *Server) handleSiteCreate(w http.ResponseWriter, r *http.Request) {
 		s.renderFormError(w, r, st, true, fmt.Errorf("站点 %s 已存在", st.Domain))
 		return
 	}
+	if _, onDisk := s.Caddy.ReadDiskSite(st.Domain); onDisk {
+		s.renderFormError(w, r, st, true, fmt.Errorf("站点 %s 的磁盘配置已存在", st.Domain))
+		return
+	}
 	if err := s.applySiteChange(st, false); err != nil {
 		s.renderFormError(w, r, st, true, err)
 		return
 	}
 	s.setFlash(w, "站点 "+st.Domain+" 已创建并生效")
-	s.redirect(w, r, "/sites")
+	s.redirect(w, r, "/caddy/sites")
 }
 
 func (s *Server) handleSiteEdit(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	st, ok := s.Cfg.GetSite(domain)
+	// Edit what is actually on disk, not the cached panel model.
+	ds, ok := s.Caddy.ReadDiskSite(domain)
 	if !ok {
-		s.setFlash(w, "站点不存在")
-		s.redirect(w, r, "/sites")
+		s.setFlash(w, "磁盘上未找到站点 "+domain+" 的配置")
+		s.redirect(w, r, "/caddy/sites")
 		return
 	}
-	preview, _ := s.Caddy.RenderSite(&st)
+	st, _, err := s.importSiteFromDisk(ds.Content)
+	if err != nil {
+		s.setFlash(w, "解析磁盘配置失败: "+err.Error())
+		s.redirect(w, r, "/caddy/sites")
+		return
+	}
+	preview, _ := s.Caddy.RenderSite(st)
 	s.render(w, r, "site_form", "编辑站点 "+domain, siteForm{
-		Site:       st,
-		Accounts:   accountsText(&st),
+		Site:       *st,
+		Accounts:   accountsText(st),
 		Preview:    preview,
 		HostSite:   s.Cfg.GetHostSite(),
 		PHPSockets: detectPHPSockets(),
@@ -174,10 +190,10 @@ func (s *Server) handleSiteEdit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
-	i := s.Cfg.FindSite(domain)
-	if i < 0 {
+	_, onDisk := s.Caddy.ReadDiskSite(domain)
+	if s.Cfg.FindSite(domain) < 0 && !onDisk {
 		s.setFlash(w, "站点不存在")
-		s.redirect(w, r, "/sites")
+		s.redirect(w, r, "/caddy/sites")
 		return
 	}
 	st, err := parseSiteForm(r)
@@ -194,31 +210,45 @@ func (s *Server) handleSiteUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setFlash(w, "站点 "+domain+" 已更新并生效")
-	s.redirect(w, r, "/sites")
+	s.redirect(w, r, "/caddy/sites")
 }
 
 func (s *Server) handleSiteDelete(w http.ResponseWriter, r *http.Request) {
 	domain := r.PathValue("domain")
 	st, ok := s.Cfg.GetSite(domain)
 	if !ok {
-		s.setFlash(w, "站点不存在")
-		s.redirect(w, r, "/sites")
-		return
+		// Disk-only snippet (never managed by the panel): adopt it into the
+		// model first so deletion goes through the same safe path (staging,
+		// validation, rollback).
+		ds, found := s.Caddy.ReadDiskSite(domain)
+		if !found {
+			s.setFlash(w, "站点不存在")
+			s.redirect(w, r, "/caddy/sites")
+			return
+		}
+		parsed, _, err := s.importSiteFromDisk(ds.Content)
+		if err != nil {
+			s.setFlash(w, "解析磁盘配置失败: "+err.Error())
+			s.redirect(w, r, "/caddy/sites")
+			return
+		}
+		st = *parsed
+		_ = s.Cfg.UpsertSite(st)
 	}
 	if err := s.Cfg.DeleteSite(domain); err != nil {
 		s.setFlash(w, err.Error())
-		s.redirect(w, r, "/sites")
+		s.redirect(w, r, "/caddy/sites")
 		return
 	}
 	if err := s.Caddy.Apply(); err != nil {
 		// Caddy 回滚后仍在运行旧配置，把站点加回模型保持一致。
 		_ = s.Cfg.UpsertSite(st)
 		s.setFlash(w, "删除失败，站点已保留: "+err.Error())
-		s.redirect(w, r, "/sites")
+		s.redirect(w, r, "/caddy/sites")
 		return
 	}
 	s.setFlash(w, "站点 "+domain+" 已删除并生效")
-	s.redirect(w, r, "/sites")
+	s.redirect(w, r, "/caddy/sites")
 }
 
 // handleSitePreviewRender renders an unsaved form into a Caddyfile snippet.

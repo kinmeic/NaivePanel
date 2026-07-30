@@ -1,0 +1,38 @@
+{{define "content"}}
+<h1>Caddy</h1>
+<div class="cards">
+  <div class="card">
+    <h3>{{icon "power"}}服务控制</h3>
+    <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+    <form method="post" action="{{.Base}}/caddy/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button name="action" value="start" class="btn">{{icon "play"}}启动</button>
+      <button name="action" value="stop" class="btn" data-confirm="停止 Caddy 后面板将随站点一起不可访问，需要到服务器上手动启动，确定停止？">{{icon "square"}}停止</button>
+      <button name="action" value="restart" class="btn" data-confirm="重启期间面板与站点会短暂断连，确定重启 Caddy？">{{icon "rotate-cw"}}重启</button>
+    </form>
+    <form method="post" action="{{.Base}}/caddy/reload" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button type="submit" class="btn" data-confirm="确定要用线上配置文件重载 Caddy？">{{icon "refresh-cw"}}重载配置</button>
+    </form>
+    <a class="btn" href="{{.Base}}/logs?service=caddy">{{icon "scroll-text"}}查看日志</a>
+  </div>
+</div>
+
+<div class="tabs">
+  <a class="btn {{if eq .Data.View "sites"}}active{{end}}" href="{{.Base}}/caddy/sites">{{icon "globe"}}站点</a>
+  <a class="btn {{if eq .Data.View "config"}}active{{end}}" href="{{.Base}}/caddy/config">{{icon "file-cog"}}配置查看</a>
+</div>
+
+{{if eq .Data.View "sites"}}
+<div class="list-head">
+  <span class="muted">站点列表实时解析自磁盘上的 Caddyfile 片段，即 Caddy 实际加载的内容。</span>
+  <a class="btn primary" href="{{.Base}}/sites/new">{{icon "plus"}}新建站点</a>
+</div>
+<div data-list-src="{{.Base}}/caddy/sites/list">
+  <div class="loading"><span class="spinner"></span>正在解析 Caddyfile…</div>
+</div>
+{{else}}
+<p class="muted">当前磁盘上的真实 Caddyfile 与站点片段原文。</p>
+<pre class="preview">{{.Data.Content}}</pre>
+{{end}}
+{{end}}

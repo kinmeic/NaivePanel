@@ -1,0 +1,25 @@
+{{if .Data.Rows}}
+<table>
+  <thead><tr><th>域名</th><th>类型</th><th>forward_proxy</th><th>upstream</th><th>备注</th><th>操作</th></tr></thead>
+  <tbody>
+  {{range .Data.Rows}}
+  <tr>
+    <td><strong>{{.Site.Domain}}</strong>{{if eq .Site.Domain $.Data.HostSite}} <span class="tag">面板寄宿</span>{{end}}</td>
+    <td>{{if .Site.RawMode}}高级模式{{else}}{{.Site.Web.Type}}{{end}}</td>
+    <td>{{if .Site.ForwardProxy.Enabled}}启用（{{len .Site.ForwardProxy.Accounts}} 个账号）{{else}}关闭{{end}}</td>
+    <td class="mono">{{if .Site.ForwardProxy.Enabled}}{{if .Site.ForwardProxy.UseBypassCore}}BypassCore{{else}}{{if .Site.ForwardProxy.Upstream}}{{.Site.ForwardProxy.Upstream}}{{else}}直连{{end}}{{end}}{{else}}-{{end}}</td>
+    <td>{{if .Site.ExtraBlocks}}{{len .Site.ExtraBlocks}} 个自定义块{{end}}</td>
+    <td>
+      <a class="btn" href="{{$.Base}}/sites/{{.Site.Domain}}/edit">{{icon "pencil"}}编辑</a>
+      <form method="post" action="{{$.Base}}/sites/{{.Site.Domain}}/delete" class="inline" data-confirm="确定删除站点 {{.Site.Domain}}？">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <button type="submit" class="danger">{{icon "trash-2"}}删除</button>
+      </form>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">磁盘上还没有站点配置，点击右上角「新建站点」创建第一个。</div>
+{{end}}

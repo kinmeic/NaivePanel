@@ -1,20 +1,40 @@
 // NaivePanel UI helpers.
 (function () {
-  // Render Lucide icons (<i data-lucide="name">).
-  if (window.lucide && window.lucide.createIcons) {
-    window.lucide.createIcons();
-  }
+  var SVG_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide">';
+  var TRASH_SVG = SVG_OPEN +
+    '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>' +
+    '<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>' +
+    '<line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>';
 
-  // Confirm dialogs.
-  document.querySelectorAll("[data-confirm]").forEach(function (el) {
-    el.addEventListener("submit", function (e) {
-      if (!confirm(el.getAttribute("data-confirm"))) e.preventDefault();
-    });
-    if (el.tagName === "BUTTON") {
-      el.addEventListener("click", function (e) {
+  // Confirm dialogs (re-bound after async fragments load).
+  function bindConfirm(root) {
+    root.querySelectorAll("[data-confirm]").forEach(function (el) {
+      if (el.dataset.confirmBound) return;
+      el.dataset.confirmBound = "1";
+      el.addEventListener("submit", function (e) {
         if (!confirm(el.getAttribute("data-confirm"))) e.preventDefault();
       });
-    }
+      if (el.tagName === "BUTTON") {
+        el.addEventListener("click", function (e) {
+          if (!confirm(el.getAttribute("data-confirm"))) e.preventDefault();
+        });
+      }
+    });
+  }
+  bindConfirm(document);
+
+  // Async list fragments: <div data-list-src="..."> shows a spinner until the
+  // server-rendered fragment arrives.
+  document.querySelectorAll("[data-list-src]").forEach(function (el) {
+    fetch(el.getAttribute("data-list-src"), { credentials: "same-origin" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        el.innerHTML = html;
+        bindConfirm(el);
+      })
+      .catch(function (e) {
+        el.innerHTML = '<div class="error">加载失败: ' + e + '</div>';
+      });
   });
 
   // Raw mode toggle.
@@ -38,12 +58,9 @@
         '<option value="handle_path">handle_path</option></select>' +
         '<input name="eb_matcher" placeholder="/api/*">' +
         '<textarea name="eb_content" rows="3" class="mono" placeholder="reverse_proxy 127.0.0.1:8080"></textarea>' +
-        '<button type="button" class="eb-del danger"><i data-lucide="trash-2"></i>删除</button>';
+        '<button type="button" class="eb-del danger">' + TRASH_SVG + '删除</button>';
       box.appendChild(row);
       bindDel(row.querySelector(".eb-del"));
-      if (window.lucide && window.lucide.createIcons) {
-        window.lucide.createIcons();
-      }
     });
     document.querySelectorAll(".eb-del").forEach(bindDel);
   }

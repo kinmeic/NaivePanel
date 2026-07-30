@@ -18,14 +18,10 @@ import (
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	totpOn, _ := s.Cfg.TOTPState()
 	data := map[string]any{
-		"Domain":         s.Cfg.Domain,
-		"BasePath":       s.Cfg.BasePath,
-		"Listen":         s.Cfg.Listen,
 		"HostSite":       s.Cfg.GetHostSite(),
 		"TOTPEnabled":    totpOn,
 		"RecoveryLeft":   s.Cfg.RecoveryCount(),
 		"Sites":          s.Cfg.SitesSnapshot(),
-		"SocksPort":      s.Cfg.BypassCore.SocksPort,
 		"Version":        s.Version,
 		"AutoUpdate":     s.Cfg.SelfUpdateEnabled(),
 		"PendingTOTPQR":  "",

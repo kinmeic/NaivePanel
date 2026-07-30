@@ -82,17 +82,17 @@
         </select>
         <input name="eb_matcher" value="{{.Matcher}}" placeholder="/api/*">
         <textarea name="eb_content" rows="3" class="mono" placeholder="reverse_proxy 127.0.0.1:8080">{{.Content}}</textarea>
-        <button type="button" class="eb-del danger"><i data-lucide="trash-2"></i>删除</button>
+        <button type="button" class="eb-del danger">{{icon "trash-2"}}删除</button>
       </div>
     {{end}}
     </div>
-    <button type="button" id="eb-add" class="btn"><i data-lucide="plus"></i>添加自定义块</button>
+    <button type="button" id="eb-add" class="btn">{{icon "plus"}}添加自定义块</button>
   </fieldset>
   </div>
 
   <div class="actions">
-    <button type="submit" class="primary"><i data-lucide="save"></i>保存并生效</button>
-    <button type="button" id="btn-preview" class="btn"><i data-lucide="refresh-cw"></i>刷新预览</button>
+    <button type="submit" class="primary">{{icon "save"}}保存并生效</button>
+    <button type="button" id="btn-preview" class="btn">{{icon "refresh-cw"}}刷新预览</button>
   </div>
 </form>
 
