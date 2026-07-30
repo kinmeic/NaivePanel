@@ -315,6 +315,8 @@
     var trafficHistory = [];
     var trafficHistoryLimit = 40;
     var trafficCanvas = document.getElementById("traffic-chart");
+    var systemStatsLoading = false;
+    var systemStatsTimer = 0;
     function formatBytes(value) {
       var number = Number(value);
       if (!Number.isFinite(number) || number < 0) return "—";
@@ -483,6 +485,8 @@
       firstSystemSample = false;
     }
     function loadSystemStats() {
+      if (systemStatsLoading) return;
+      systemStatsLoading = true;
       fetch(systemCards.getAttribute("data-system-stats-url"), {
         credentials: "same-origin",
         cache: "no-store"
@@ -491,10 +495,17 @@
         return response.json();
       }).then(renderSystemStats).catch(function () {
         setText("system-sampled-at", "资源数据暂时不可用");
+      }).then(function () {
+        systemStatsLoading = false;
+        systemStatsTimer = window.setTimeout(loadSystemStats, document.hidden ? 15000 : 3000);
       });
     }
     loadSystemStats();
-    setInterval(loadSystemStats, 3000);
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden || systemStatsLoading) return;
+      window.clearTimeout(systemStatsTimer);
+      loadSystemStats();
+    });
     window.addEventListener("resize", drawTrafficChart);
   }
 

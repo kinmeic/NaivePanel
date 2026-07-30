@@ -1,6 +1,7 @@
 package caddymgr
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,6 +147,63 @@ func TestRenderAllAddsForwardProxyOrderOnlyWhenNeeded(t *testing.T) {
 	}
 	if !strings.Contains(files["Caddyfile"], "order forward_proxy before file_server") {
 		t.Fatalf("forward proxy order missing:\n%s", files["Caddyfile"])
+	}
+}
+
+func TestForwardProxyInstalled(t *testing.T) {
+	manager, dir := testManager(t, "{}\n")
+	fakeCaddy := filepath.Join(dir, "caddy")
+	writeFake := func(output string, exitCode int) {
+		t.Helper()
+		script := "#!/bin/sh\nprintf '%s' '" + output + "'\nexit " + fmt.Sprint(exitCode) + "\n"
+		if err := os.WriteFile(fakeCaddy, []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager.cfg.Caddy.Bin = fakeCaddy
+
+	writeFake("http.handlers.file_server\nhttp.handlers.forward_proxy\n", 0)
+	installed, err := manager.detectForwardProxyInstalled()
+	if err != nil || !installed {
+		t.Fatalf("installed=%v err=%v", installed, err)
+	}
+
+	writeFake("http.handlers.file_server\nhttp.handlers.reverse_proxy\n", 0)
+	installed, err = manager.detectForwardProxyInstalled()
+	if err != nil || installed {
+		t.Fatalf("installed=%v err=%v", installed, err)
+	}
+
+	writeFake("module listing failed\n", 1)
+	if _, err := manager.detectForwardProxyInstalled(); err == nil || !strings.Contains(err.Error(), "module listing failed") {
+		t.Fatalf("expected command error with diagnostic output, got %v", err)
+	}
+}
+
+func TestForwardProxyInstalledCachesResult(t *testing.T) {
+	manager, dir := testManager(t, "{}\n")
+	fakeCaddy := filepath.Join(dir, "caddy")
+	counter := filepath.Join(dir, "calls")
+	script := fmt.Sprintf(`#!/bin/sh
+echo called >> %q
+echo http.handlers.forward_proxy
+`, counter)
+	if err := os.WriteFile(fakeCaddy, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager.cfg.Caddy.Bin = fakeCaddy
+	for index := 0; index < 2; index++ {
+		installed, err := manager.ForwardProxyInstalled()
+		if err != nil || !installed {
+			t.Fatalf("call %d: installed=%v err=%v", index+1, installed, err)
+		}
+	}
+	calls, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(calls), "called"); got != 1 {
+		t.Fatalf("Caddy module command ran %d times, want 1", got)
 	}
 }
 

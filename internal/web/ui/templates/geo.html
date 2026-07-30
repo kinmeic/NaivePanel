@@ -18,16 +18,4 @@
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
   <button type="submit" class="primary">{{icon "download"}}立即更新</button>
 </form>
-
-<h2>{{icon "settings-2"}}更新设置</h2>
-<form method="post" action="{{.Base}}/geo/settings">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <label>GitHub 镜像前缀（服务器无法直连 GitHub 时填写，如 https://mirror.ghproxy.com；留空为直连）
-    <input name="mirror" value="{{.Data.Geo.Mirror}}" placeholder="留空为直连">
-  </label>
-  <label class="check">
-    <input type="checkbox" name="auto" {{if .Data.Geo.AutoUpdateWeekly}}checked{{end}}> 每周自动更新（面板重启后生效）
-  </label>
-  <button type="submit" class="btn">{{icon "save"}}保存设置</button>
-</form>
 {{end}}

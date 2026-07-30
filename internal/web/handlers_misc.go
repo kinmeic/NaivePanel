@@ -253,7 +253,6 @@ func (s *Server) handleGeo(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "geo", "Geo 数据文件", map[string]any{
 		"Files": geo.Stat(geoCfg.Dir),
 		"Dir":   geoCfg.Dir,
-		"Geo":   geoCfg,
 	})
 }
 
@@ -275,24 +274,23 @@ func (s *Server) handleGeoUpdate(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/geo")
 }
 
-// handleGeoSettings saves mirror / auto-update preferences.
-func (s *Server) handleGeoSettings(w http.ResponseWriter, r *http.Request) {
+// handleUpdateSettings saves the shared GitHub mirror consumed by NaivePanel,
+// BypassCore and Geo updates.
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	mirror := strings.TrimSpace(r.FormValue("mirror"))
-	auto := r.FormValue("auto") == "on"
 	if err := config.ValidateMirror(mirror); err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
-		s.redirect(w, r, "/geo")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	err := s.Cfg.Mutate(func(c *config.Config) error {
 		c.Geo.Mirror = mirror
-		c.Geo.AutoUpdateWeekly = auto
 		return nil
 	})
 	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 	} else {
-		s.setFlash(w, "设置已保存（自动更新在面板重启后生效）")
+		s.setFlash(w, "更新设置已保存")
 	}
-	s.redirect(w, r, "/geo")
+	s.redirect(w, r, "/settings")
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -23,6 +24,14 @@ import (
 
 const keepBackups = 20
 const maxRawConfigSize = 2 << 20
+const forwardProxyModule = "http.handlers.forward_proxy"
+const moduleCheckCacheTTL = 30 * time.Second
+
+type moduleCheckCache struct {
+	checkedAt time.Time
+	installed bool
+	errorText string
+}
 
 // Manager applies panel site models to the on-disk Caddy configuration.
 type Manager struct {
@@ -40,6 +49,12 @@ type Manager struct {
 	drop    map[string]bool
 
 	applyMu sync.Mutex
+
+	// moduleMu prevents concurrent page loads from spawning duplicate Caddy
+	// processes. Module availability changes only when the binary is replaced,
+	// so a short cache keeps the status fresh without work on every log refresh.
+	moduleMu          sync.Mutex
+	forwardProxyCache moduleCheckCache
 }
 
 // New creates a Manager bound to the panel config.
@@ -158,11 +173,16 @@ func (m *Manager) writeStaging(files map[string]string) (string, error) {
 // validate runs caddy validate against the staged config.
 func (m *Manager) validate(staging string) error {
 	main := filepath.Join(staging, "Caddyfile")
-	cmd := exec.Command(m.cfg.Caddy.Bin, "validate", "--config", main, "--adapter", "caddyfile")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.Caddy.Bin, "validate", "--config", main, "--adapter", "caddyfile")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+filepath.Join(staging, ".data"))
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("caddy validate 超时")
+		}
 		return fmt.Errorf("caddy validate 失败: %v\n%s", err, out.String())
 	}
 	return nil
@@ -181,6 +201,47 @@ func (m *Manager) ReadConfig() ([]byte, error) {
 		return nil, fmt.Errorf("Caddyfile 超过 2 MiB")
 	}
 	return data, nil
+}
+
+// ForwardProxyInstalled reports whether the configured Caddy binary contains
+// the forward_proxy HTTP handler. Matching is performed in Go instead of
+// invoking a shell pipeline.
+func (m *Manager) ForwardProxyInstalled() (bool, error) {
+	m.moduleMu.Lock()
+	defer m.moduleMu.Unlock()
+	now := time.Now()
+	if age := now.Sub(m.forwardProxyCache.checkedAt); !m.forwardProxyCache.checkedAt.IsZero() &&
+		age >= 0 && age < moduleCheckCacheTTL {
+		if m.forwardProxyCache.errorText != "" {
+			return false, errors.New(m.forwardProxyCache.errorText)
+		}
+		return m.forwardProxyCache.installed, nil
+	}
+	installed, err := m.detectForwardProxyInstalled()
+	m.forwardProxyCache = moduleCheckCache{checkedAt: now, installed: installed}
+	if err != nil {
+		m.forwardProxyCache.errorText = err.Error()
+	}
+	return installed, err
+}
+
+func (m *Manager) detectForwardProxyInstalled() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.Caddy.Bin, "list-modules")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, fmt.Errorf("Caddy 模块检测超时")
+		}
+		return false, fmt.Errorf("运行 caddy list-modules 失败: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.TrimSpace(line) == forwardProxyModule {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // FormatConfig formats Caddyfile text with the configured Caddy binary.
@@ -449,10 +510,15 @@ func (m *Manager) applyLive(files map[string]string) error {
 
 // reload asks the running Caddy to adopt the live config.
 func (m *Manager) reload() error {
-	cmd := exec.Command(m.cfg.Caddy.Bin, "reload", "--config", m.cfg.Caddy.MainFile, "--adapter", "caddyfile")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.Caddy.Bin, "reload", "--config", m.cfg.Caddy.MainFile, "--adapter", "caddyfile")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("caddy reload 超时")
+		}
 		return fmt.Errorf("caddy reload 失败: %v\n%s", err, out.String())
 	}
 	return nil

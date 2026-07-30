@@ -25,6 +25,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Version":    s.Version,
 		"AutoUpdate": s.Cfg.SelfUpdateEnabled(),
+		"Geo":        s.Cfg.GeoSnapshot(),
 		"Bypass": map[string]any{
 			"Installed":  bypassInstalled,
 			"Version":    bypassVersion,
@@ -274,9 +275,10 @@ func (s *Server) handleSelfUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		s.setFlash(w, "已更新到 "+tag+"，面板即将重启，请稍候刷新页面")
 		s.redirect(w, r, "/settings")
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+		// protect wraps the writer to record the operation status. A response
+		// controller follows Unwrap(), so the redirect is still flushed before
+		// the process restarts.
+		_ = http.NewResponseController(w).Flush()
 		go func() {
 			time.Sleep(2 * time.Second)
 			selfupdate.RestartSelf()

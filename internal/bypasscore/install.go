@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -143,10 +144,15 @@ func (m *Manager) Install(mirror string) (string, error) {
 // smokeCheck runs the freshly installed binary once to catch corrupted or
 // wrong-architecture downloads before the service is (re)started.
 func (m *Manager) smokeCheck() error {
-	cmd := exec.Command(m.cfg.BypassCore.BinPath, "--version")
+	ctx, cancel := context.WithTimeout(context.Background(), versionCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.BypassCore.BinPath, "--version")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("新二进制自检超时（已保留在 %s，请排查）", m.cfg.BypassCore.BinPath)
+		}
 		return fmt.Errorf("新二进制自检失败（已保留在 %s，请排查）: %v: %s",
 			m.cfg.BypassCore.BinPath, err, strings.TrimSpace(out.String()))
 	}
@@ -291,6 +297,11 @@ func runSystemctl(args ...string) error {
 }
 
 func execCombined(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCommandTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if ctx.Err() != nil {
+		return string(out), fmt.Errorf("命令执行超时")
+	}
 	return string(out), err
 }

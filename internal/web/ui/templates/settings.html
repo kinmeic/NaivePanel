@@ -21,7 +21,7 @@
       <input type="hidden" name="action" value="toggle">
       <label class="check"><input type="checkbox" name="auto_update" {{if .Data.AutoUpdate}}checked{{end}} onchange="this.form.submit()"> 每天自动检查并安装新版本</label>
     </form>
-    <p class="muted">更新包经 SHA256SUMS 校验、安装前自检，替换后面板自动重启。GitHub 访问受限时可在 Geo 数据页配置镜像源。</p>
+    <p class="muted">面板与 BypassCore 更新包均会校验 SHA256SUMS，并在安装前自检；面板替换后会自动重启。GitHub 访问受限时，可在下方“更新设置”中配置通用镜像源。</p>
   </div>
 
   <div class="card">
@@ -47,6 +47,18 @@
     {{end}}
     <p>程序：<code class="path-code">{{.Data.Bypass.BinPath}}</code></p>
     <p>配置：<code class="path-code">{{.Data.Bypass.ConfigPath}}</code></p>
+  </div>
+
+  <div class="card">
+    <h3>{{icon "settings-2"}}更新设置</h3>
+    <form method="post" action="{{.Base}}/settings/update">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>GitHub 镜像前缀（服务器无法直连 GitHub 时填写，如 https://mirror.ghproxy.com；留空为直连）
+        <input name="mirror" value="{{.Data.Geo.Mirror}}" placeholder="留空为直连">
+      </label>
+      <button type="submit" class="btn">{{icon "save"}}保存设置</button>
+    </form>
+    <p class="muted">此通用镜像设置用于 NaivePanel、BypassCore 和 Geo 数据的 GitHub 下载。</p>
   </div>
 </div>
 {{end}}

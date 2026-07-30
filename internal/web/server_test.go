@@ -74,7 +74,8 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 
 	recorder = httptest.NewRecorder()
 	server.render(recorder, request, "caddy", "Caddy", caddyPageData{
-		Active: true, Enabled: true, LogLines: 200, LogContent: "caddy-log-line",
+		Active: true, Enabled: true, ForwardProxyInstalled: true,
+		LogLines: 200, LogContent: "caddy-log-line",
 	})
 	caddyHTML := recorder.Body.String()
 	if strings.Contains(caddyHTML, "配置查看") || strings.Contains(caddyHTML, ">站点<") ||
@@ -82,10 +83,17 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 		!strings.Contains(caddyHTML, `class="service-status-line"`) ||
 		!strings.Contains(caddyHTML, `data-async-restart data-service-label="Caddy"`) ||
 		!strings.Contains(caddyHTML, `id="caddy-restart-progress"`) ||
+		!strings.Contains(caddyHTML, "Forwardproxy 插件：") ||
+		!strings.Contains(caddyHTML, `<span class="ok">已安装</span>`) ||
 		!strings.Contains(caddyHTML, "Caddy 日志") ||
 		!strings.Contains(caddyHTML, "caddy-log-line") ||
 		strings.Contains(caddyHTML, `/logs?service=caddy`) {
 		t.Fatalf("unexpected Caddy service page:\n%s", caddyHTML)
+	}
+	autostartAt := strings.Index(caddyHTML, "开机自启：")
+	forwardProxyAt := strings.Index(caddyHTML, "Forwardproxy 插件：")
+	if autostartAt < 0 || forwardProxyAt < autostartAt {
+		t.Fatalf("Forwardproxy status must follow autostart status:\n%s", caddyHTML)
 	}
 
 	recorder = httptest.NewRecorder()
@@ -114,6 +122,9 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	recorder = httptest.NewRecorder()
 	server.render(recorder, request, "settings", "应用管理", map[string]any{
 		"Version": "test",
+		"Geo": config.Geo{
+			Mirror: "https://mirror.example.com",
+		},
 		"Bypass": map[string]any{
 			"Installed": true, "Version": "v1.2.3", "BinPath": "/usr/local/bin/bypasscore",
 			"ConfigPath": "/etc/bypasscore/config.json",
@@ -128,15 +139,35 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	for _, want := range []string{
 		"<h1>应用管理</h1>", "版本：<code>v1.2.3</code>",
 		`/manage-test/bypasscore/update/check`, "检查更新", "立即更新",
+		">更新设置</h3>", `/manage-test/settings/update`,
+		`value="https://mirror.example.com"`,
+		"此通用镜像设置用于 NaivePanel、BypassCore 和 Geo 数据",
 	} {
 		if !strings.Contains(settingsHTML, want) {
 			t.Fatalf("application management is missing %q:\n%s", want, settingsHTML)
 		}
 	}
-	for _, removed := range []string{"SOCKS5 端口", "修改密码", "两步验证", "面板寄宿站点", "settings/hostsite"} {
+	for _, removed := range []string{
+		"SOCKS5 端口", "修改密码", "两步验证", "面板寄宿站点",
+		"settings/hostsite", "每周自动更新", `name="auto"`,
+	} {
 		if strings.Contains(settingsHTML, removed) {
 			t.Fatalf("application management still contains %q:\n%s", removed, settingsHTML)
 		}
+	}
+	if strings.Contains(settingsHTML, "可在 Geo 数据页配置镜像源") {
+		t.Fatalf("application management still points mirror settings to the Geo page:\n%s", settingsHTML)
+	}
+
+	recorder = httptest.NewRecorder()
+	server.render(recorder, request, "geo", "Geo 数据文件", map[string]any{
+		"Dir": "/etc/bypasscore",
+	})
+	geoHTML := recorder.Body.String()
+	if !strings.Contains(geoHTML, `/manage-test/geo/update`) ||
+		strings.Contains(geoHTML, "更新设置") ||
+		strings.Contains(geoHTML, `/manage-test/geo/settings`) {
+		t.Fatalf("Geo page should keep only status and immediate update controls:\n%s", geoHTML)
 	}
 
 	recorder = httptest.NewRecorder()
@@ -181,11 +212,19 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	for _, want := range []string{
 		"<h1>概览</h1>", ">概览</span>", "CPU", "内存", "负载", "磁盘",
 		`id="traffic-chart"`, "系统信息", "example-host", "Example Linux",
-		"192.0.2.10", "服务状态",
+		"192.0.2.10", "服务状态", `<small class="brand-version">test</small>`,
 	} {
 		if !strings.Contains(dashboardHTML, want) {
 			t.Fatalf("overview is missing %q:\n%s", want, dashboardHTML)
 		}
+	}
+	geoMenuAt := strings.Index(dashboardHTML, `href="/manage-test/geo"`)
+	cronMenuAt := strings.Index(dashboardHTML, `href="/manage-test/cron"`)
+	logMenuAt := strings.Index(dashboardHTML, `href="/manage-test/logs"`)
+	if geoMenuAt < 0 || cronMenuAt < geoMenuAt || logMenuAt < cronMenuAt ||
+		!strings.Contains(dashboardHTML, "<span>操作日志</span>") ||
+		strings.Contains(dashboardHTML, "<span>日志</span>") {
+		t.Fatalf("sidebar navigation order or operation-log label is incorrect:\n%s", dashboardHTML)
 	}
 	if strings.Contains(dashboardHTML, ">站点<") ||
 		strings.Contains(dashboardHTML, "/caddy/sites") {
@@ -248,6 +287,18 @@ func TestNewParsesAllTemplates(t *testing.T) {
 	}
 }
 
+func TestStatusRecorderAllowsResponseFlush(t *testing.T) {
+	underlying := httptest.NewRecorder()
+	recorder := &statusRecorder{ResponseWriter: underlying}
+	recorder.WriteHeader(http.StatusSeeOther)
+	if err := http.NewResponseController(recorder).Flush(); err != nil {
+		t.Fatalf("flush through status recorder: %v", err)
+	}
+	if !underlying.Flushed {
+		t.Fatal("underlying response was not flushed")
+	}
+}
+
 func TestFormatUptime(t *testing.T) {
 	for _, test := range []struct {
 		value time.Duration
@@ -300,6 +351,28 @@ func TestLegacyServiceLogLinksRedirectToServicePages(t *testing.T) {
 			t.Fatalf("%s log redirect: code=%d location=%q, want %q",
 				test.service, recorder.Code, recorder.Header().Get("Location"), test.want)
 		}
+	}
+}
+
+func TestUpdateSettingsSaveReturnsToApplicationManagement(t *testing.T) {
+	server, err := New(testConfig(t), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{
+		"mirror": {"https://mirror.example.com"},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/manage-test/settings/update",
+		strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	server.handleUpdateSettings(recorder, request)
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/manage-test/settings" {
+		t.Fatalf("code=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	geoSettings := server.Cfg.GeoSnapshot()
+	if geoSettings.Mirror != "https://mirror.example.com" {
+		t.Fatalf("update settings were not saved: %#v", geoSettings)
 	}
 }
 

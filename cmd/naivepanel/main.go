@@ -12,9 +12,7 @@ import (
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
-	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/config"
-	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/selfupdate"
 	"github.com/kinmeic/NaivePanel/internal/service"
 	"github.com/kinmeic/NaivePanel/internal/web"
@@ -59,9 +57,6 @@ func main() {
 		log.Fatalf("初始化 Web 服务失败: %v", err)
 	}
 
-	if cfg.Geo.AutoUpdateWeekly {
-		go geoAutoUpdate(cfg)
-	}
 	if cfg.SelfUpdateEnabled() {
 		go selfAutoUpdate(cfg)
 	}
@@ -78,26 +73,6 @@ func main() {
 		version, cfg.Listen, cfg.BasePath, cfg.GetHostSite(), cfg.BasePath)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("HTTP 服务退出: %v", err)
-	}
-}
-
-// geoAutoUpdate refreshes geodata weekly and reloads BypassCore.
-func geoAutoUpdate(cfg *config.Config) {
-	ticker := time.NewTicker(7 * 24 * time.Hour)
-	defer ticker.Stop()
-	for range ticker.C {
-		g := cfg.GeoSnapshot()
-		if err := geo.Update(g.Dir, g.Mirror); err != nil {
-			log.Printf("geo 自动更新失败: %v", err)
-			continue
-		}
-		bc := bypasscore.New(cfg)
-		if bc.Installed() {
-			if cur, err := bc.ReadConfig(); err == nil && len(cur) > 0 {
-				_ = bc.ApplyConfig(cur)
-			}
-		}
-		log.Printf("geo 数据已自动更新")
 	}
 }
 

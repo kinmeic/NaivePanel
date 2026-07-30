@@ -21,7 +21,13 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/config"
 )
 
-var semanticVersionPattern = regexp.MustCompile(`(?i)(?:^|[^0-9])v?([0-9]+\.[0-9]+\.[0-9]+)(?:[^0-9]|$)`)
+var semanticVersionPattern = regexp.MustCompile(`(?i)\bbypasscore(?:\s+version)?\s+v?([0-9]+\.[0-9]+\.[0-9]+)\b`)
+
+const (
+	versionCommandTimeout = 5 * time.Second
+	checkCommandTimeout   = 30 * time.Second
+	serviceCommandTimeout = 45 * time.Second
+)
 
 // Manager handles one BypassCore installation.
 type Manager struct {
@@ -57,8 +63,10 @@ func (m *Manager) Installed() bool {
 
 // Version returns `bypasscore --version` output.
 func (m *Manager) Version() string {
-	out, err := exec.Command(m.cfg.BypassCore.BinPath, "--version").CombinedOutput()
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), versionCommandTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, m.cfg.BypassCore.BinPath, "--version").CombinedOutput()
+	if err != nil || ctx.Err() != nil || len(out) > 64<<10 {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
@@ -122,13 +130,18 @@ func (m *Manager) Ready() (json.RawMessage, error) {
 
 // checkConfig validates config bytes with `bypasscore -check-config`.
 func (m *Manager) checkConfig(path string) error {
-	cmd := exec.Command(m.cfg.BypassCore.BinPath, "-check-config", "-config", path)
+	ctx, cancel := context.WithTimeout(context.Background(), checkCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.cfg.BypassCore.BinPath, "-check-config", "-config", path)
 	// Match the systemd unit's WorkingDirectory. BypassCore resolves relative
 	// geodata references (geoip.dat / geosite.dat) from this directory.
 	cmd.Dir = m.cfg.BypassCore.WorkDir
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("配置校验超时")
+		}
 		return fmt.Errorf("配置校验失败: %v\n%s", err, out.String())
 	}
 	return nil
@@ -172,10 +185,12 @@ func (m *Manager) ApplyConfigWithResult(content []byte) (ApplyResult, error) {
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := tmp.Write(content); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return ApplyResult{}, err
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		return ApplyResult{}, fmt.Errorf("关闭临时配置文件: %w", err)
+	}
 	if err := m.checkConfig(tmp.Name()); err != nil {
 		return ApplyResult{}, err
 	}
@@ -297,14 +312,21 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 }
 
 func serviceActive() bool {
-	return exec.Command("systemctl", "is-active", "--quiet", "bypasscore").Run() == nil
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", "bypasscore").Run() == nil
 }
 
 func restartService() error {
-	cmd := exec.Command("systemctl", "restart", "bypasscore")
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "restart", "bypasscore")
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("重启 bypasscore 超时")
+		}
 		return fmt.Errorf("重启 bypasscore 失败: %v: %s", err, out.String())
 	}
 	return nil

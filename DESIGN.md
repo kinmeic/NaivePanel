@@ -82,7 +82,6 @@ bypasscore:
 geo:
   dir: /etc/bypasscore
   mirror: ""                    # 可选 GitHub 镜像前缀，如 https://mirror.ghproxy.com/
-  auto_update_weekly: false
 ```
 
 ## 5. 认证与安全

@@ -60,12 +60,13 @@ type Server struct {
 
 // pageData is the common template payload.
 type pageData struct {
-	Base  string
-	CSRF  string
-	User  string
-	Flash string
-	Title string
-	Data  any
+	Base    string
+	CSRF    string
+	User    string
+	Flash   string
+	Title   string
+	Version string
+	Data    any
 }
 
 // New builds the server and its routes.
@@ -198,9 +199,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
 	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
 	s.mux.HandleFunc("POST "+bp+"/geo/update", s.protect(s.handleGeoUpdate))
-	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleGeoSettings))
+	// Keep former endpoints for already-open pages and existing bookmarks.
+	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleUpdateSettings))
 
 	s.mux.HandleFunc("GET "+bp+"/settings", s.protect(s.handleSettings))
+	s.mux.HandleFunc("POST "+bp+"/settings/update", s.protect(s.handleUpdateSettings))
+	s.mux.HandleFunc("POST "+bp+"/settings/geo", s.protect(s.handleUpdateSettings))
 	s.mux.HandleFunc("GET "+bp+"/security", s.protect(s.handleSecurity))
 	s.mux.HandleFunc("POST "+bp+"/security/password", s.protect(s.handlePasswordChange))
 	s.mux.HandleFunc("POST "+bp+"/security/totp/setup", s.protect(s.handleTOTPSetup))
@@ -353,10 +357,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title stri
 		return
 	}
 	d := pageData{
-		Base:  s.Cfg.BasePath,
-		Title: title,
-		Flash: s.takeFlash(w, r),
-		Data:  data,
+		Base:    s.Cfg.BasePath,
+		Title:   title,
+		Version: s.Version,
+		Flash:   s.takeFlash(w, r),
+		Data:    data,
 	}
 	if sess := s.session(r); sess != nil {
 		d.CSRF = sess.CSRF
@@ -385,7 +390,7 @@ func (s *Server) renderFrag(w http.ResponseWriter, r *http.Request, page string,
 		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
 		return
 	}
-	d := pageData{Base: s.Cfg.BasePath, Data: data}
+	d := pageData{Base: s.Cfg.BasePath, Version: s.Version, Data: data}
 	if sess := s.session(r); sess != nil {
 		d.CSRF = sess.CSRF
 		d.User = sess.User

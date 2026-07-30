@@ -235,7 +235,6 @@ bypasscore:
   work_dir: /etc/bypasscore
 geo:
   dir: /etc/bypasscore
-  auto_update_weekly: false
 backup_dir: $PANEL_CONFIG_DIR/backups
 sites:
   - domain: $DOMAIN

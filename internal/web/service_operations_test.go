@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,4 +54,25 @@ func TestBeginServiceRestartDeduplicatesActiveOperation(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("restart operation did not finish")
+}
+
+func TestServiceOperationPruningEnforcesHardLimit(t *testing.T) {
+	server, err := New(testConfig(t), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for index := 0; index < serviceOperationLimit+20; index++ {
+		id := fmt.Sprintf("completed-%03d", index)
+		server.serviceOps[id] = &serviceOperation{
+			ID: id, Done: true, UpdatedAt: now.Add(time.Duration(index) * time.Millisecond),
+		}
+	}
+	server.serviceOpsMu.Lock()
+	server.pruneServiceOperationsLocked(now)
+	count := len(server.serviceOps)
+	server.serviceOpsMu.Unlock()
+	if count >= serviceOperationLimit {
+		t.Fatalf("completed operation count=%d, want less than %d to leave room for a new operation", count, serviceOperationLimit)
+	}
 }

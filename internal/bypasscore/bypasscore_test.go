@@ -171,6 +171,13 @@ echo 'bypasscore v0.8.7 (commit=abcdef, built=2026-07-30T00:00:00Z, go=go1.26)'
 	if got := manager.VersionTag(); got != "v0.8.7" {
 		t.Fatalf("VersionTag()=%q, want v0.8.7", got)
 	}
+
+	if err := os.WriteFile(fakeBin, []byte("#!/bin/sh\necho 'bypasscore (commit=abcdef, go=go1.26.5)'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.VersionTag(); got != "" {
+		t.Fatalf("VersionTag()=%q, must not mistake the Go toolchain for the BypassCore version", got)
+	}
 }
 
 func TestApplyConfigReportsSavedOnlyForStoppedService(t *testing.T) {

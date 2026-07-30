@@ -19,7 +19,7 @@ BypassCore 分流核心与 Geo 数据文件。
 - **BypassCore**：一键安装/更新（GitHub release，amd64/arm64，SHA256SUMS 校验 + 安装后自检）、
   原始 JSON 编辑与无损格式化、`-check-config` → 控制面事务热重载、
   服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
-- **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动/每周自动更新、镜像源
+- **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动更新、镜像源
 - **日志**：查看面板操作审计记录，以及 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 
@@ -58,7 +58,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.3.9
+VER=v0.4.1
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
@@ -100,7 +100,6 @@ bypasscore:
   work_dir: /etc/bypasscore
 geo:
   dir: /etc/bypasscore
-  auto_update_weekly: false
 backup_dir: /etc/naivepanel/backups
 sites:
   - domain: example.com

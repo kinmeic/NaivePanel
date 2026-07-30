@@ -9,11 +9,13 @@ import (
 
 // caddyPageData feeds the Caddy service page.
 type caddyPageData struct {
-	Active     bool
-	Enabled    bool
-	LogLines   int
-	LogContent string
-	LogError   string
+	Active                  bool
+	Enabled                 bool
+	ForwardProxyInstalled   bool
+	ForwardProxyDetectError string
+	LogLines                int
+	LogContent              string
+	LogError                string
 }
 
 type caddyConfigPageData struct {
@@ -24,13 +26,19 @@ type caddyConfigPageData struct {
 
 func (s *Server) caddyData(r *http.Request) caddyPageData {
 	lines, content, logError := readServiceLog(r, "caddy")
-	return caddyPageData{
+	forwardProxyInstalled, forwardProxyErr := s.Caddy.ForwardProxyInstalled()
+	data := caddyPageData{
 		Active:     sysd.IsActive("caddy"),
 		Enabled:    sysd.IsEnabled("caddy"),
 		LogLines:   lines,
 		LogContent: content,
 		LogError:   logError,
 	}
+	data.ForwardProxyInstalled = forwardProxyInstalled
+	if forwardProxyErr != nil {
+		data.ForwardProxyDetectError = forwardProxyErr.Error()
+	}
+	return data
 }
 
 // handleCaddy renders service controls. Configuration editing lives on a

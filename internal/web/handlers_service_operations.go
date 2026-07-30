@@ -5,12 +5,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 )
 
 const serviceOperationRetention = 10 * time.Minute
+const serviceOperationLimit = 64
 
 // serviceOperation is intentionally small and contains no systemctl output:
 // the browser only needs safe, user-facing progress while detailed failures
@@ -44,11 +46,7 @@ func newServiceOperationID() (string, error) {
 func (s *Server) beginServiceRestart(unit, label string, delay time.Duration) (*serviceOperation, bool, error) {
 	now := time.Now()
 	s.serviceOpsMu.Lock()
-	for id, operation := range s.serviceOps {
-		if operation.Done && now.Sub(operation.UpdatedAt) > serviceOperationRetention {
-			delete(s.serviceOps, id)
-		}
-	}
+	s.pruneServiceOperationsLocked(now)
 	if id := s.activeServiceOps[unit]; id != "" {
 		if operation := s.serviceOps[id]; operation != nil && !operation.Done {
 			snapshot := *operation
@@ -79,6 +77,33 @@ func (s *Server) beginServiceRestart(unit, label string, delay time.Duration) (*
 	return &snapshot, true, nil
 }
 
+// pruneServiceOperationsLocked expires old entries and enforces a hard cap so
+// repeated completed operations cannot grow the in-memory map without bound.
+// The caller must hold serviceOpsMu.
+func (s *Server) pruneServiceOperationsLocked(now time.Time) {
+	for id, operation := range s.serviceOps {
+		if operation.Done && now.Sub(operation.UpdatedAt) > serviceOperationRetention {
+			delete(s.serviceOps, id)
+		}
+	}
+	for len(s.serviceOps) >= serviceOperationLimit {
+		var oldestID string
+		var oldestAt time.Time
+		for id, operation := range s.serviceOps {
+			if !operation.Done {
+				continue
+			}
+			if oldestID == "" || operation.UpdatedAt.Before(oldestAt) {
+				oldestID, oldestAt = id, operation.UpdatedAt
+			}
+		}
+		if oldestID == "" {
+			return
+		}
+		delete(s.serviceOps, oldestID)
+	}
+}
+
 func (s *Server) runServiceRestart(id, unit, label string, delay time.Duration) {
 	if delay > 0 {
 		time.Sleep(delay)
@@ -94,7 +119,8 @@ func (s *Server) runServiceRestart(id, unit, label string, delay time.Duration) 
 		err = s.serviceAction("restart", unit)
 	}
 	if err != nil {
-		s.finishServiceOperation(id, unit, false, label+" 重启失败："+err.Error())
+		log.Printf("后台重启 %s 失败: %v", unit, err)
+		s.finishServiceOperation(id, unit, false, label+" 重启失败，请查看服务日志")
 		return
 	}
 

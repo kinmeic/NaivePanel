@@ -49,9 +49,8 @@ type BypassCore struct {
 
 // Geo holds geodata update settings.
 type Geo struct {
-	Dir              string `yaml:"dir"`
-	Mirror           string `yaml:"mirror"` // optional URL prefix for GitHub releases
-	AutoUpdateWeekly bool   `yaml:"auto_update_weekly"`
+	Dir    string `yaml:"dir"`
+	Mirror string `yaml:"mirror"` // optional URL prefix for GitHub releases
 }
 
 // CaddyPaths locates the managed Caddy installation.

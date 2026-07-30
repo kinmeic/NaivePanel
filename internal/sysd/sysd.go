@@ -10,12 +10,54 @@ import (
 	"time"
 )
 
+const (
+	actionTimeout = 45 * time.Second
+	queryTimeout  = 5 * time.Second
+	statusTimeout = 10 * time.Second
+	maxOutputSize = 4 << 20
+)
+
+type limitedBuffer struct {
+	buf       bytes.Buffer
+	remaining int
+	truncated bool
+}
+
+func newLimitedBuffer(limit int) *limitedBuffer {
+	return &limitedBuffer{remaining: limit}
+}
+
+func (b *limitedBuffer) Write(data []byte) (int, error) {
+	originalLength := len(data)
+	if len(data) > b.remaining {
+		data = data[:b.remaining]
+		b.truncated = true
+	}
+	if len(data) > 0 {
+		_, _ = b.buf.Write(data)
+		b.remaining -= len(data)
+	}
+	return originalLength, nil
+}
+
+func (b *limitedBuffer) String() string {
+	if b.truncated {
+		return b.buf.String() + "\n（输出超过 4 MiB，已截断）"
+	}
+	return b.buf.String()
+}
+
 // Action runs systemctl <verb> <unit> and returns combined output on error.
 func Action(verb, unit string) error {
-	cmd := exec.Command("systemctl", verb, unit)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", verb, unit)
+	out := newLimitedBuffer(maxOutputSize)
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("systemctl %s %s 超时", verb, unit)
+		}
 		return fmt.Errorf("systemctl %s %s: %v: %s", verb, unit, err, out.String())
 	}
 	return nil
@@ -23,18 +65,27 @@ func Action(verb, unit string) error {
 
 // IsActive reports whether the unit is active.
 func IsActive(unit string) bool {
-	return exec.Command("systemctl", "is-active", "--quiet", unit).Run() == nil
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
 }
 
 // IsEnabled reports whether the unit is configured to start automatically.
 func IsEnabled(unit string) bool {
-	return exec.Command("systemctl", "is-enabled", "--quiet", unit).Run() == nil
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "systemctl", "is-enabled", "--quiet", unit).Run() == nil
 }
 
 // Status returns systemctl status text (may be non-zero exit for dead units).
 func Status(unit string) string {
-	out, _ := exec.Command("systemctl", "status", "--no-pager", "-l", unit).CombinedOutput()
-	return string(out)
+	ctx, cancel := context.WithTimeout(context.Background(), statusTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "systemctl", "status", "--no-pager", "-l", unit)
+	out := newLimitedBuffer(maxOutputSize)
+	cmd.Stdout, cmd.Stderr = out, out
+	_ = cmd.Run()
+	return out.String()
 }
 
 // Log returns the last lines of the unit's journal (newest last). lines is
@@ -51,12 +102,15 @@ func Log(unit string, lines int) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "journalctl", "-u", unit,
 		"-n", strconv.Itoa(lines), "--no-pager", "-o", "short-iso")
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
+	out := newLimitedBuffer(maxOutputSize)
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("读取日志超时（journalctl -u %s）", unit)
+		}
 		return "", fmt.Errorf("读取日志失败（journalctl -u %s）: %v: %s", unit, err, out.String())
 	}
-	if out.Len() == 0 {
+	if out.buf.Len() == 0 {
 		return "（暂无日志）", nil
 	}
 	return out.String(), nil
