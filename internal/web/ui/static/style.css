@@ -316,6 +316,62 @@ button:disabled { opacity: .65; cursor: wait; }
 .tabs { display: flex; gap: 8px; margin: 18px 0 14px; }
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 
+.editor-title {
+  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px;
+}
+.editor-title h1 { margin: 1px 0 2px; }
+.editor-title p { margin: 0; }
+.config-tabs {
+  display: flex; gap: 4px; margin: 0 0 18px; padding: 4px;
+  overflow-x: auto; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--panel);
+}
+.config-tab {
+  flex: 0 0 auto; min-width: 92px; border-color: transparent; background: transparent;
+  color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.config-tab.active {
+  border-color: var(--accent); color: #fff; background: var(--accent);
+}
+.config-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.config-panel { min-width: 0; }
+.config-panel > fieldset:first-child { margin-top: 0; }
+.config-field-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px;
+}
+.config-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin: 4px 0 12px;
+}
+.config-section-head h2 { margin: 0; }
+.config-section-head p { margin: 2px 0 0; }
+.config-array-table { min-width: 720px; }
+.config-array-table td { vertical-align: middle; overflow-wrap: anywhere; }
+.config-array-table th:last-child, .config-array-table td:last-child { width: 100px; }
+.routing-table { min-width: 640px; }
+.config-condition-cell { color: var(--muted); font-size: 12px; }
+.config-row-actions { white-space: nowrap; }
+.config-empty-cell { padding: 24px; color: var(--muted); text-align: center; }
+.config-dialog {
+  width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 40px);
+  padding: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text); background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.55);
+}
+.config-dialog::backdrop { background: rgba(4, 7, 12, .72); backdrop-filter: blur(2px); }
+.config-dialog > form { padding: 18px; }
+.dialog-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; margin-bottom: 12px;
+}
+.dialog-head h2 { margin: 0; }
+.dialog-actions { justify-content: flex-end; margin-bottom: 0; }
+.config-extra-fields {
+  margin-top: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
+}
+.config-extra-fields summary { color: var(--muted); cursor: pointer; }
+.config-extra-fields p { margin: 8px 0 4px; }
+.config-dialog label small { display: block; margin-top: 4px; }
+
 .loading { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 28px 4px; }
 .spinner {
   width: 16px; height: 16px; border-radius: 50%;
@@ -358,4 +414,7 @@ body.auth { display: flex; min-height: 100vh; align-items: center; justify-conte
   .actions { flex-wrap: wrap; }
   .eb-row { grid-template-columns: 1fr; }
   .eb-row textarea, .eb-row .eb-del { grid-column: 1; }
+  .config-field-grid { grid-template-columns: 1fr; }
+  .config-section-head { align-items: flex-start; flex-direction: column; }
+  .config-section-head button { width: 100%; }
 }

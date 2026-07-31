@@ -1,16 +1,168 @@
 {{define "content"}}
-<h1>BypassCore 配置编辑</h1>
-{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
-<p class="muted">保存时将执行：JSON 校验 → bypasscore -check-config → 备份 → 落盘 → 控制面热重载。支持热重载的修改无需手动重启；只有监听器等无法热更新的变更才会由面板自动重启服务。</p>
-<form method="post" action="{{.Base}}/bypasscore/config" id="bypass-json-form">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <div id="json-format-error" class="error hidden"></div>
-  <p class="muted">直接编辑完整 JSON 文件；格式化操作不会提交或保存配置。</p>
-  <textarea id="bypass-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
-  <div class="actions">
-    <button type="button" class="btn" id="json-format-btn">{{icon "file-cog"}}格式化 JSON</button>
-    <button type="submit" class="primary">{{icon "check"}}校验并生效</button>
-    <a class="btn" href="{{.Base}}/bypasscore">{{icon "arrow-left"}}返回</a>
+<div class="editor-title">
+  <a class="btn icon-btn" href="{{.Base}}/bypasscore" title="返回 BypassCore" aria-label="返回 BypassCore">{{icon "arrow-left"}}</a>
+  <div>
+    <h1>BypassCore 配置编辑</h1>
+    <p class="muted">结构化表单与 Raw JSON 双向同步，最终统一经过校验、备份和热重载流程。</p>
   </div>
+</div>
+
+{{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
+<div id="bypass-editor-error" class="error hidden" role="alert"></div>
+
+<form method="post" action="{{.Base}}/bypasscore/config" id="bypass-config-form">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+
+  <div class="config-tabs" role="tablist" aria-label="BypassCore 配置区域">
+    <button type="button" class="config-tab active" role="tab" aria-selected="true" aria-controls="bypass-panel-control" data-bypass-tab="control">control</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="bypass-panel-inbounds" data-bypass-tab="inbounds">inbounds</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="bypass-panel-outbounds" data-bypass-tab="outbounds">outbounds</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="bypass-panel-routing" data-bypass-tab="routing">routing</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="bypass-panel-dns" data-bypass-tab="dns">dns</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="bypass-panel-raw" data-bypass-tab="raw">raw</button>
+  </div>
+
+  <section class="config-panel" id="bypass-panel-control" role="tabpanel" data-bypass-panel="control">
+    <fieldset>
+      <legend>控制面</legend>
+      <label class="check">
+        <input type="checkbox" id="bypass-control-enabled"> 启用 Control Socket
+      </label>
+      <div class="config-field-grid">
+        <label>Socket 路径
+          <input id="bypass-control-socket" placeholder="/run/bypasscore/control.sock">
+        </label>
+        <label>文件模式
+          <input id="bypass-control-mode" placeholder="0660" maxlength="4" inputmode="numeric">
+        </label>
+      </div>
+      <p class="muted">关闭控制面后，无法热重载的配置变更将需要重启 BypassCore。</p>
+    </fieldset>
+    <div class="actions"><button type="submit" class="primary">{{icon "check"}}校验并生效</button></div>
+  </section>
+
+  <section class="config-panel hidden" id="bypass-panel-inbounds" role="tabpanel" data-bypass-panel="inbounds">
+    <div class="config-section-head">
+      <div>
+        <h2>入站</h2>
+        <p class="muted">配置 BypassCore 接收连接的监听入口。</p>
+      </div>
+      <button type="button" class="btn" data-bypass-add="inbounds">{{icon "plus"}}添加入站</button>
+    </div>
+    <div class="table-scroll">
+      <table class="config-array-table">
+        <thead><tr><th>tag</th><th>type</th><th>listen</th><th>network</th><th>port</th><th>操作</th></tr></thead>
+        <tbody id="bypass-inbounds-rows"></tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="submit" class="primary">{{icon "check"}}校验并生效</button></div>
+  </section>
+
+  <section class="config-panel hidden" id="bypass-panel-outbounds" role="tabpanel" data-bypass-panel="outbounds">
+    <div class="config-section-head">
+      <div>
+        <h2>出站</h2>
+        <p class="muted">配置直连、阻断以及代理上游等出站方式。</p>
+      </div>
+      <button type="button" class="btn" data-bypass-add="outbounds">{{icon "plus"}}添加出站</button>
+    </div>
+    <div class="table-scroll">
+      <table class="config-array-table">
+        <thead><tr><th>tag</th><th>mode</th><th>protocol</th><th>server</th><th>操作</th></tr></thead>
+        <tbody id="bypass-outbounds-rows"></tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="submit" class="primary">{{icon "check"}}校验并生效</button></div>
+  </section>
+
+  <section class="config-panel hidden" id="bypass-panel-routing" role="tabpanel" data-bypass-panel="routing">
+    <fieldset>
+      <legend>路由设置</legend>
+      <div class="config-field-grid">
+        <label>domainStrategy
+          <input id="bypass-routing-domain-strategy" list="bypass-domain-strategies" placeholder="IpIfNonMatch">
+        </label>
+        <label>finalOutboundTag
+          <input id="bypass-routing-final-outbound" placeholder="direct">
+        </label>
+      </div>
+    </fieldset>
+    <div class="config-section-head">
+      <div>
+        <h2>路由规则</h2>
+        <p class="muted">规则按配置文件中的顺序匹配。</p>
+      </div>
+      <button type="button" class="btn" data-bypass-add="routing.rules">{{icon "plus"}}添加规则</button>
+    </div>
+    <div class="table-scroll">
+      <table class="config-array-table routing-table">
+        <thead><tr><th>ruleTag</th><th>匹配条件</th><th>outboundTag</th><th>操作</th></tr></thead>
+        <tbody id="bypass-routing-rows"></tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="submit" class="primary">{{icon "check"}}校验并生效</button></div>
+  </section>
+
+  <section class="config-panel hidden" id="bypass-panel-dns" role="tabpanel" data-bypass-panel="dns">
+    <fieldset>
+      <legend>DNS 设置</legend>
+      <label>queryStrategy
+        <input id="bypass-dns-query-strategy" list="bypass-query-strategies" placeholder="UseIP">
+      </label>
+    </fieldset>
+    <div class="config-section-head">
+      <div>
+        <h2>DNS 服务器</h2>
+        <p class="muted">按顺序向可用的 DNS 服务器发起查询。</p>
+      </div>
+      <button type="button" class="btn" data-bypass-add="dns.servers">{{icon "plus"}}添加 DNS 服务器</button>
+    </div>
+    <div class="table-scroll">
+      <table class="config-array-table">
+        <thead><tr><th>address</th><th>tag</th><th>outboundTag</th><th>操作</th></tr></thead>
+        <tbody id="bypass-dns-rows"></tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="submit" class="primary">{{icon "check"}}校验并生效</button></div>
+  </section>
+
+  <section class="config-panel hidden" id="bypass-panel-raw" role="tabpanel" data-bypass-panel="raw">
+    <p class="muted">直接编辑完整 JSON；切换回其他 Tab 时会解析并同步结构化表单。</p>
+    <div id="json-format-error" class="error hidden"></div>
+    <textarea id="bypass-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
+    <div class="actions">
+      <button type="button" class="btn" id="json-format-btn">{{icon "file-cog"}}格式化 JSON</button>
+      <button type="submit" class="primary">{{icon "check"}}校验并生效</button>
+    </div>
+  </section>
+
+  <datalist id="bypass-domain-strategies">
+    <option value="AsIs"><option value="IPIfNonMatch"><option value="IPOnDemand"><option value="IpIfNonMatch">
+  </datalist>
+  <datalist id="bypass-query-strategies">
+    <option value="UseIP"><option value="UseIPv4"><option value="UseIPv6">
+  </datalist>
 </form>
+
+<dialog id="bypass-item-dialog" class="config-dialog" aria-labelledby="bypass-dialog-title">
+  <form method="dialog" id="bypass-item-form">
+    <div class="dialog-head">
+      <h2 id="bypass-dialog-title">编辑配置项</h2>
+      <button type="button" class="icon-btn dialog-close" aria-label="关闭" title="关闭">{{icon "x"}}</button>
+    </div>
+    <div id="bypass-dialog-error" class="error hidden" role="alert"></div>
+    <div id="bypass-dialog-fields"></div>
+    <details class="config-extra-fields">
+      <summary>其他字段 JSON</summary>
+      <p class="muted">面板未结构化展示的字段会保留在这里；内容必须是一个 JSON 对象。</p>
+      <textarea id="bypass-dialog-extra" rows="8" class="mono wide" spellcheck="false">{}</textarea>
+    </details>
+    <div class="actions dialog-actions">
+      <button type="button" class="primary" id="bypass-dialog-save">{{icon "save"}}保存到配置</button>
+      <button type="button" class="btn dialog-close">取消</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{.Base}}/static/bypass-config.js"></script>
 {{end}}

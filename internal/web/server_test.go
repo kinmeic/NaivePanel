@@ -44,18 +44,46 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	server.render(recorder, request, "bypass_config", "BypassCore 配置", map[string]any{
-		"Config": `{"log":{"level":"info"}}`,
+		"Config": `{
+  "control": {"enabled": true, "socket": "/run/bypasscore/control.sock", "mode": "0660"},
+  "inbounds": [{"tag": "caddy-in", "type": "socks", "listen": "127.0.0.1", "network": "tcp", "port": 1080}],
+  "outbounds": [{"tag": "direct", "mode": "freedom"}],
+  "routing": {"domainStrategy": "IpIfNonMatch", "finalOutboundTag": "direct", "rules": []},
+  "dns": {"queryStrategy": "UseIP", "servers": []}
+}`,
 	})
 	bypassHTML := recorder.Body.String()
 	if !strings.Contains(bypassHTML, `id="json-format-btn"`) ||
-		strings.Contains(bypassHTML, "结构化编辑") ||
-		!strings.Contains(bypassHTML, "支持热重载的修改无需手动重启") {
+		!strings.Contains(bypassHTML, `id="bypass-item-dialog"`) ||
+		!strings.Contains(bypassHTML, `data-bypass-add="inbounds"`) ||
+		!strings.Contains(bypassHTML, `data-bypass-add="outbounds"`) ||
+		!strings.Contains(bypassHTML, `data-bypass-add="routing.rules"`) ||
+		!strings.Contains(bypassHTML, `data-bypass-add="dns.servers"`) ||
+		!strings.Contains(bypassHTML, `/static/bypass-config.js`) ||
+		!strings.Contains(bypassHTML, "热重载流程") {
 		t.Fatalf("unexpected BypassCore editor:\n%s", bypassHTML)
 	}
-	formatAt := strings.Index(bypassHTML, `id="json-format-btn"`)
-	applyAt := strings.Index(bypassHTML, "校验并生效")
+	lastTab := -1
+	for _, tab := range []string{"control", "inbounds", "outbounds", "routing", "dns", "raw"} {
+		at := strings.Index(bypassHTML, `data-bypass-tab="`+tab+`"`)
+		if at < 0 || at < lastTab {
+			t.Fatalf("BypassCore config tabs are missing or out of order (%s):\n%s", tab, bypassHTML)
+		}
+		lastTab = at
+	}
+	titleAt := strings.Index(bypassHTML, "<h1>BypassCore 配置编辑</h1>")
+	backAt := strings.Index(bypassHTML, `aria-label="返回 BypassCore"`)
+	if backAt < 0 || titleAt < 0 || backAt > titleAt {
+		t.Fatalf("return button must be left of the BypassCore editor title:\n%s", bypassHTML)
+	}
+	rawAt := strings.Index(bypassHTML, `id="bypass-panel-raw"`)
+	if rawAt < 0 {
+		t.Fatalf("Raw tab panel is missing:\n%s", bypassHTML)
+	}
+	formatAt := strings.Index(bypassHTML[rawAt:], `id="json-format-btn"`)
+	applyAt := strings.Index(bypassHTML[rawAt:], "校验并生效")
 	if formatAt < 0 || applyAt < 0 || formatAt > applyAt {
-		t.Fatalf("JSON formatter must be immediately available before apply:\n%s", bypassHTML)
+		t.Fatalf("Raw tab controls are missing or out of order:\n%s", bypassHTML)
 	}
 
 	recorder = httptest.NewRecorder()
