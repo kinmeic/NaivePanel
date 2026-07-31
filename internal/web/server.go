@@ -198,6 +198,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
 	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
+	s.mux.HandleFunc("POST "+bp+"/geo/check", s.protect(s.handleGeoCheck))
 	s.mux.HandleFunc("POST "+bp+"/geo/update", s.protect(s.handleGeoUpdate))
 	// Keep former endpoints for already-open pages and existing bookmarks.
 	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleUpdateSettings))

@@ -250,10 +250,22 @@ func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 // handleGeo shows geodata file status.
 func (s *Server) handleGeo(w http.ResponseWriter, r *http.Request) {
 	geoCfg := s.Cfg.GeoSnapshot()
+	s.renderGeo(w, r, geoCfg.Dir, nil)
+}
+
+func (s *Server) renderGeo(w http.ResponseWriter, r *http.Request, dir string, comparison []geo.Comparison) {
 	s.render(w, r, "geo", "Geo 数据文件", map[string]any{
-		"Files": geo.Stat(geoCfg.Dir),
-		"Dir":   geoCfg.Dir,
+		"Files":      geo.Stat(dir),
+		"Dir":        dir,
+		"Comparison": comparison,
 	})
+}
+
+// handleGeoCheck compares local metadata with the current release assets
+// without downloading or modifying the managed files.
+func (s *Server) handleGeoCheck(w http.ResponseWriter, r *http.Request) {
+	geoCfg := s.Cfg.GeoSnapshot()
+	s.renderGeo(w, r, geoCfg.Dir, geo.Check(geoCfg.Dir, geoCfg.Mirror))
 }
 
 // handleGeoUpdate downloads and verifies the latest geodata files.

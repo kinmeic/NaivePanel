@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func geoTestServer(t *testing.T, files map[string][]byte, badSum string) *httptest.Server {
@@ -35,6 +36,8 @@ func geoTestServer(t *testing.T, files map[string][]byte, badSum string) *httpte
 			http.NotFound(w, r)
 			return
 		}
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		w.Header().Set("Last-Modified", "Thu, 30 Jul 2026 10:00:00 GMT")
 		_, _ = w.Write(data)
 	}))
 }
@@ -91,5 +94,38 @@ func TestUpdateChecksumFailureKeepsExistingPair(t *testing.T) {
 		if err != nil || string(got) != "old "+name {
 			t.Fatalf("%s changed on staged update failure: %q, err=%v", name, got, err)
 		}
+	}
+}
+
+func TestCheckComparesRemoteMetadataWithoutReplacingFiles(t *testing.T) {
+	files := map[string][]byte{
+		"geoip.dat":   []byte("same-size"),
+		"geosite.dat": []byte("remote-is-larger"),
+	}
+	server := geoTestServer(t, files, "")
+	withGeoTestClient(t, server)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "geoip.dat"), []byte("local-old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	localTime := time.Date(2026, 7, 29, 9, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(dir, "geoip.dat"), localTime, localTime); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Check(dir, server.URL)
+	if len(got) != 2 {
+		t.Fatalf("Check() returned %d entries, want 2", len(got))
+	}
+	if got[0].Status != "大小一致" || !got[0].RemoteSizeKnown ||
+		got[0].RemoteSize != int64(len(files["geoip.dat"])) || !got[0].RemoteModTimeKnown {
+		t.Fatalf("unexpected matching comparison: %#v", got[0])
+	}
+	if got[1].Status != "本地缺失" || got[1].StatusClass != "warn" {
+		t.Fatalf("unexpected missing comparison: %#v", got[1])
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "geoip.dat"))
+	if err != nil || string(content) != "local-old" {
+		t.Fatalf("metadata check modified local file: %q, err=%v", content, err)
 	}
 }

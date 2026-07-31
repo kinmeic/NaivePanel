@@ -1,8 +1,8 @@
 {{define "content"}}
-<h1>日志</h1>
+<h1>操作日志</h1>
 <p class="muted">面板内已认证操作的审计记录；不记录密码、令牌、配置正文或其他表单内容（最新在最后）。</p>
 <div class="logbar">
-  <span class="muted">行数：</span>
+  <span class="muted">条数：</span>
   <a class="btn {{if eq .Data.Lines 100}}active{{end}}" href="{{.Base}}/logs?lines=100">100</a>
   <a class="btn {{if eq .Data.Lines 200}}active{{end}}" href="{{.Base}}/logs?lines=200">200</a>
   <a class="btn {{if eq .Data.Lines 500}}active{{end}}" href="{{.Base}}/logs?lines=500">500</a>
@@ -10,5 +10,34 @@
   <a class="btn" href="{{.Base}}/logs?lines={{.Data.Lines}}">{{icon "refresh-cw"}}刷新</a>
 </div>
 {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
-{{if .Data.Content}}<pre class="preview logs">{{.Data.Content}}</pre>{{end}}
+{{if not .Data.Error}}
+<div class="table-scroll">
+  <table class="operation-log-table">
+    <thead>
+      <tr>
+        <th>时间</th>
+        <th>用户</th>
+        <th>方法</th>
+        <th>路径</th>
+        <th>状态</th>
+        <th>耗时</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Data.Entries}}
+      <tr>
+        <td class="operation-log-time">{{.Time}}</td>
+        <td>{{.User}}</td>
+        <td><code>{{.Method}}</code></td>
+        <td class="operation-log-path"><code>{{.Path}}</code></td>
+        <td><span class="{{.StatusClass}}">{{.Status}}</span></td>
+        <td class="operation-log-duration">{{.Duration}}</td>
+      </tr>
+      {{else}}
+      <tr><td colspan="6" class="config-empty-cell">暂无操作日志</td></tr>
+      {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
 {{end}}

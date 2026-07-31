@@ -312,6 +312,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .logbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 .logs { max-height: 70vh; overflow-y: auto; }
+.operation-log-table { min-width: 820px; }
+.operation-log-time, .operation-log-duration { white-space: nowrap; }
+.operation-log-path { max-width: 520px; overflow-wrap: anywhere; word-break: break-word; }
 
 .tabs { display: flex; gap: 8px; margin: 18px 0 14px; }
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -360,6 +363,7 @@ button:disabled { opacity: .65; cursor: wait; }
   padding: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px;
   color: var(--text); background: var(--panel); box-shadow: 0 24px 80px rgba(0,0,0,.55);
 }
+#caddy-site-dialog { width: min(980px, calc(100vw - 32px)); }
 .config-dialog::backdrop { background: rgba(4, 7, 12, .72); backdrop-filter: blur(2px); }
 .config-dialog > form { padding: 18px; }
 .dialog-head {

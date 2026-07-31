@@ -14,8 +14,35 @@
   {{end}}
   </tbody>
 </table>
-<form method="post" action="{{.Base}}/geo/update" class="inline-block" data-confirm="现在下载并更新 Geo 数据文件？">
-  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <button type="submit" class="primary">{{icon "download"}}立即更新</button>
-</form>
+<div class="actions">
+  <form method="post" action="{{.Base}}/geo/check">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn">{{icon "refresh-cw"}}检查更新</button>
+  </form>
+  <form method="post" action="{{.Base}}/geo/update" data-confirm="现在下载并更新 Geo 数据文件？">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit" class="primary">{{icon "download"}}立即更新</button>
+  </form>
+</div>
+{{if .Data.Comparison}}
+<h2>检查结果</h2>
+<div class="table-scroll">
+  <table>
+    <thead><tr><th>文件</th><th>本地大小</th><th>远端大小</th><th>本地修改时间</th><th>远端修改时间</th><th>对比</th></tr></thead>
+    <tbody>
+    {{range .Data.Comparison}}
+    <tr>
+      <td class="mono">{{.Name}}</td>
+      <td>{{if .LocalExists}}{{.LocalSize}} 字节{{else}}-{{end}}</td>
+      <td>{{if .RemoteSizeKnown}}{{.RemoteSize}} 字节{{else}}-{{end}}</td>
+      <td>{{fmtTime .LocalModTime}}</td>
+      <td>{{if .RemoteModTimeKnown}}{{fmtTime .RemoteModTime}}{{else}}-{{end}}</td>
+      <td><span class="{{.StatusClass}}">{{.Status}}</span>{{if .Error}}<br><small class="muted">{{.Error}}</small>{{end}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="muted">检查仅对比远端元数据，不会下载或替换文件。文件大小不同或本地缺失时建议更新；修改时间仅供参考。</p>
+{{end}}
 {{end}}

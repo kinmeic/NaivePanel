@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/config"
+	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/sites"
 	"github.com/kinmeic/NaivePanel/internal/systemstats"
 )
@@ -215,12 +216,22 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	recorder = httptest.NewRecorder()
 	server.render(recorder, request, "geo", "Geo 数据文件", map[string]any{
 		"Dir": "/etc/bypasscore",
+		"Comparison": []geo.Comparison{{
+			Name: "geoip.dat", LocalExists: true, LocalSize: 100,
+			RemoteSize: 120, RemoteSizeKnown: true,
+			Status: "大小不同", StatusClass: "warn",
+		}},
 	})
 	geoHTML := recorder.Body.String()
-	if !strings.Contains(geoHTML, `/manage-test/geo/update`) ||
+	if !strings.Contains(geoHTML, `/manage-test/geo/check`) ||
+		!strings.Contains(geoHTML, `检查更新`) ||
+		!strings.Contains(geoHTML, `/manage-test/geo/update`) ||
+		!strings.Contains(geoHTML, `本地修改时间`) ||
+		!strings.Contains(geoHTML, `远端修改时间`) ||
+		!strings.Contains(geoHTML, `大小不同`) ||
 		strings.Contains(geoHTML, "更新设置") ||
 		strings.Contains(geoHTML, `/manage-test/geo/settings`) {
-		t.Fatalf("Geo page should keep only status and immediate update controls:\n%s", geoHTML)
+		t.Fatalf("Geo page should show metadata checks and update controls:\n%s", geoHTML)
 	}
 
 	recorder = httptest.NewRecorder()
@@ -293,12 +304,24 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	}
 
 	recorder = httptest.NewRecorder()
-	server.render(recorder, request, "logs", "日志", map[string]any{
-		"Service": "operations", "Lines": 200, "Content": "（暂无操作日志）",
+	server.render(recorder, request, "logs", "操作日志", logsPageData{
+		Lines: 200,
+		Entries: []operationLogEntry{{
+			Time: "2026-07-31 10:00:00", User: "admin", Method: "POST",
+			Path: "/caddy/config", Status: "303", StatusClass: "ok", Duration: "12 ms",
+		}},
 	})
 	logsHTML := recorder.Body.String()
-	if !strings.Contains(logsHTML, "<h1>日志</h1>") ||
+	if !strings.Contains(logsHTML, "<h1>操作日志</h1>") ||
 		!strings.Contains(logsHTML, "面板内已认证操作的审计记录") ||
+		!strings.Contains(logsHTML, "<th>时间</th>") ||
+		!strings.Contains(logsHTML, "<th>用户</th>") ||
+		!strings.Contains(logsHTML, "<th>方法</th>") ||
+		!strings.Contains(logsHTML, "<th>路径</th>") ||
+		!strings.Contains(logsHTML, "<th>状态</th>") ||
+		!strings.Contains(logsHTML, "<th>耗时</th>") ||
+		!strings.Contains(logsHTML, "/caddy/config") ||
+		strings.Contains(logsHTML, `<pre class="preview logs">`) ||
 		strings.Contains(logsHTML, ">Caddy</a>") ||
 		strings.Contains(logsHTML, ">BypassCore</a>") {
 		t.Fatalf("logs page should contain operation logs only:\n%s", logsHTML)
@@ -398,6 +421,13 @@ func TestCaddyConfigEditorUsesConservativeTopLevelParsing(t *testing.T) {
 			t.Fatalf("Caddy structured editor safety behavior missing %q", required)
 		}
 	}
+	style, err := uiFS.ReadFile("ui/static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(style), `#caddy-site-dialog { width: min(980px, calc(100vw - 32px)); }`) {
+		t.Fatal("Caddy site dialog must expand to 980px while remaining viewport responsive")
+	}
 }
 
 func TestNewParsesAllTemplates(t *testing.T) {
@@ -453,6 +483,24 @@ func TestFilterOperationLogs(t *testing.T) {
 	}
 	if got := filterOperationLogs("ordinary journal line\n", 100); got != "（暂无操作日志）" {
 		t.Fatalf("unexpected empty-state text: %q", got)
+	}
+}
+
+func TestParseOperationLogLineForTable(t *testing.T) {
+	line := `2026-07-31T10:15:30+0800 host naivepanel[123]: ` + operationLogMarker +
+		` user="admin" method="POST" path="/caddy/config" status=303 duration_ms=17`
+	got := parseOperationLogLine(line)
+	want := operationLogEntry{
+		Time: "2026-07-31 10:15:30", User: "admin", Method: "POST",
+		Path: "/caddy/config", Status: "303", StatusClass: "ok", Duration: "17 ms",
+	}
+	if got != want {
+		t.Fatalf("parseOperationLogLine()=%#v, want %#v", got, want)
+	}
+
+	fallback := parseOperationLogLine("old " + operationLogMarker + " status=403")
+	if fallback.Time != "—" || fallback.Path != "status=403" || fallback.Status != "—" {
+		t.Fatalf("legacy operation log fallback lost information: %#v", fallback)
 	}
 }
 

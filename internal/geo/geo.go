@@ -19,7 +19,10 @@ var Files = []string{"geoip.dat", "geosite.dat"}
 
 var client = &http.Client{
 	Timeout: 300 * time.Second,
-	CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("更新下载重定向次数过多")
+		}
 		if req.URL.Scheme != "https" {
 			return fmt.Errorf("拒绝更新下载重定向到非 HTTPS 地址")
 		}
@@ -35,6 +38,22 @@ type Info struct {
 	ModTime time.Time
 }
 
+// Comparison describes local and remote metadata for one managed file.
+// A metadata check never downloads or replaces the file itself.
+type Comparison struct {
+	Name               string
+	LocalExists        bool
+	LocalSize          int64
+	LocalModTime       time.Time
+	RemoteSize         int64
+	RemoteSizeKnown    bool
+	RemoteModTime      time.Time
+	RemoteModTimeKnown bool
+	Status             string
+	StatusClass        string
+	Error              string
+}
+
 // Stat returns info for each managed file in dir.
 func Stat(dir string) []Info {
 	out := make([]Info, 0, len(Files))
@@ -46,6 +65,66 @@ func Stat(dir string) []Info {
 			fi.ModTime = st.ModTime()
 		}
 		out = append(out, fi)
+	}
+	return out
+}
+
+// Check compares local file metadata with the latest remote release assets.
+// Size is the most dependable HTTP metadata; modification time is shown as
+// additional context and is not used alone to claim that an update exists.
+func Check(dir, mirror string) []Comparison {
+	local := Stat(dir)
+	out := make([]Comparison, 0, len(Files))
+	for i, name := range Files {
+		item := Comparison{
+			Name:         name,
+			LocalExists:  local[i].Exists,
+			LocalSize:    local[i].Size,
+			LocalModTime: local[i].ModTime,
+		}
+		resp, err := client.Head(url(mirror, name))
+		if err != nil {
+			item.Error = err.Error()
+			item.Status = "检查失败"
+			item.StatusClass = "bad"
+			out = append(out, item)
+			continue
+		}
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		if resp.StatusCode != http.StatusOK {
+			item.Error = fmt.Sprintf("远端返回 %d", resp.StatusCode)
+			item.Status = "检查失败"
+			item.StatusClass = "bad"
+			out = append(out, item)
+			continue
+		}
+		if resp.ContentLength >= 0 {
+			item.RemoteSize = resp.ContentLength
+			item.RemoteSizeKnown = true
+		}
+		if value := resp.Header.Get("Last-Modified"); value != "" {
+			if modified, parseErr := http.ParseTime(value); parseErr == nil {
+				item.RemoteModTime = modified
+				item.RemoteModTimeKnown = true
+			}
+		}
+		switch {
+		case !item.LocalExists:
+			item.Status = "本地缺失"
+			item.StatusClass = "warn"
+		case item.RemoteSizeKnown && item.LocalSize != item.RemoteSize:
+			item.Status = "大小不同"
+			item.StatusClass = "warn"
+		case item.RemoteSizeKnown:
+			item.Status = "大小一致"
+			item.StatusClass = "ok"
+		default:
+			item.Status = "远端大小未知"
+			item.StatusClass = "warn"
+		}
+		out = append(out, item)
 	}
 	return out
 }
