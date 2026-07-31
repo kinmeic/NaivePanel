@@ -19,9 +19,10 @@ type caddyPageData struct {
 }
 
 type caddyConfigPageData struct {
-	Config string
-	Error  string
-	Notice string
+	Config    string
+	Error     string
+	Notice    string
+	ActiveTab string
 }
 
 func (s *Server) caddyData(r *http.Request) caddyPageData {
@@ -42,15 +43,15 @@ func (s *Server) caddyData(r *http.Request) caddyPageData {
 }
 
 // handleCaddy renders service controls. Configuration editing lives on a
-// separate raw-text page so the service page stays consistent with BypassCore.
+// separate page so the service page stays focused on runtime operations.
 func (s *Server) handleCaddy(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "caddy", "Caddy", s.caddyData(r))
 }
 
-// handleCaddyConfigGET renders the live main Caddyfile in a plain-text editor.
+// handleCaddyConfigGET renders the live main Caddyfile in the structured/Raw editor.
 func (s *Server) handleCaddyConfigGET(w http.ResponseWriter, r *http.Request) {
 	content, err := s.Caddy.ReadConfig()
-	data := caddyConfigPageData{Config: string(content)}
+	data := caddyConfigPageData{Config: string(content), ActiveTab: "base"}
 	if err != nil {
 		data.Error = err.Error()
 	}
@@ -60,7 +61,11 @@ func (s *Server) handleCaddyConfigGET(w http.ResponseWriter, r *http.Request) {
 // handleCaddyConfigPOST formats, validates or saves the submitted Caddyfile.
 func (s *Server) handleCaddyConfigPOST(w http.ResponseWriter, r *http.Request) {
 	content := r.FormValue("config")
-	data := caddyConfigPageData{Config: content}
+	activeTab := r.FormValue("editor_tab")
+	if activeTab != "base" && activeTab != "sites" && activeTab != "raw" {
+		activeTab = "raw"
+	}
+	data := caddyConfigPageData{Config: content, ActiveTab: activeTab}
 
 	s.caddyMu.Lock()
 	defer s.caddyMu.Unlock()

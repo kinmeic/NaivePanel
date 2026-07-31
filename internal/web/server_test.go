@@ -94,13 +94,35 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 		Config: "{\n\trespond ok\n}\n",
 	})
 	caddyConfigHTML := recorder.Body.String()
-	last := -1
-	for _, control := range []string{`value="format"`, `value="validate"`, `value="save"`, `class="btn" href="/manage-test/caddy"`} {
-		at := strings.Index(caddyConfigHTML, control)
-		if at < 0 || at < last {
-			t.Fatalf("Caddy editor controls are missing or out of order (%s):\n%s", control, caddyConfigHTML)
+	for _, expected := range []string{
+		`id="caddy-base-block"`, `id="caddy-sites-rows"`, `id="caddy-site-dialog"`,
+		`id="caddy-site-add"`, `id="caddy-panel-raw"`, `/static/caddy-config.js`,
+	} {
+		if !strings.Contains(caddyConfigHTML, expected) {
+			t.Fatalf("Caddy structured editor is missing %s:\n%s", expected, caddyConfigHTML)
 		}
-		last = at
+	}
+	lastTab = -1
+	for _, tab := range []string{"base", "sites", "raw"} {
+		at := strings.Index(caddyConfigHTML, `data-caddy-tab="`+tab+`"`)
+		if at < 0 || at < lastTab {
+			t.Fatalf("Caddy config tabs are missing or out of order (%s):\n%s", tab, caddyConfigHTML)
+		}
+		lastTab = at
+	}
+	caddyTitleAt := strings.Index(caddyConfigHTML, "<h1>Caddy 配置编辑</h1>")
+	caddyBackAt := strings.Index(caddyConfigHTML, `aria-label="返回 Caddy"`)
+	if caddyBackAt < 0 || caddyTitleAt < 0 || caddyBackAt > caddyTitleAt {
+		t.Fatalf("return button must be left of the Caddy editor title:\n%s", caddyConfigHTML)
+	}
+	caddyRawAt := strings.Index(caddyConfigHTML, `id="caddy-panel-raw"`)
+	lastControl := -1
+	for _, control := range []string{`value="format"`, `value="validate"`, `value="save"`} {
+		at := strings.Index(caddyConfigHTML[caddyRawAt:], control)
+		if at < 0 || at < lastControl {
+			t.Fatalf("Caddy Raw controls are missing or out of order (%s):\n%s", control, caddyConfigHTML)
+		}
+		lastControl = at
 	}
 
 	recorder = httptest.NewRecorder()
@@ -353,6 +375,27 @@ func TestBypassConfigDialogsUseValidatedSelectOptions(t *testing.T) {
 	} {
 		if !strings.Contains(source, behavior) {
 			t.Fatalf("dynamic outbound dialog behavior missing %q", behavior)
+		}
+	}
+}
+
+func TestCaddyConfigEditorUsesConservativeTopLevelParsing(t *testing.T) {
+	script, err := uiFS.ReadFile("ui/static/caddy-config.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, required := range []string{
+		`function parseCaddyfile(text)`,
+		`if (text.length > 2 * 1024 * 1024)`,
+		`检测到 heredoc（<<）`,
+		`if (/^\([^\r\n]+\)$/.test(header)) return "other";`,
+		`parts.splice(entry.partIndex, 1);`,
+		`var candidate = parseCaddyfile(domain + " " + block);`,
+		`if (name !== "raw" && activeTab === "raw" && rawDirty && !adoptRaw()) return false;`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("Caddy structured editor safety behavior missing %q", required)
 		}
 	}
 }

@@ -349,6 +349,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .config-array-table td { vertical-align: middle; overflow-wrap: anywhere; }
 .config-array-table th:last-child, .config-array-table td:last-child { width: 100px; }
 .routing-table { min-width: 640px; }
+.caddy-sites-table { min-width: 540px; }
+.caddy-sites-table th:last-child, .caddy-sites-table td:last-child { width: 100px; }
+.caddy-site-domain { overflow-wrap: anywhere; word-break: break-word; }
 .config-condition-cell { color: var(--muted); font-size: 12px; }
 .config-row-actions { white-space: nowrap; }
 .config-empty-cell { padding: 24px; color: var(--muted); text-align: center; }

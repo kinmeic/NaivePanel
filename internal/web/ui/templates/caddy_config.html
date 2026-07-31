@@ -1,16 +1,92 @@
 {{define "content"}}
-<h1>Caddy 配置编辑</h1>
+<div class="editor-title">
+  <a class="btn icon-btn" href="{{.Base}}/caddy" title="返回 Caddy" aria-label="返回 Caddy">{{icon "arrow-left"}}</a>
+  <div>
+    <h1>Caddy 配置编辑</h1>
+    <p class="muted">结构化区域与 Raw Caddyfile 双向同步，保存时仍会经过配置检查、备份和原子写入。</p>
+  </div>
+</div>
+
 {{if .Data.Error}}<div class="error">{{.Data.Error}}</div>{{end}}
 {{if .Data.Notice}}<div class="notice ok">{{.Data.Notice}}</div>{{end}}
-<p class="muted">直接编辑主 Caddyfile。格式化与配置检查不会保存；保存时会再次检查、备份并原子写入，服务不会自动重载。</p>
-<form method="post" action="{{.Base}}/caddy/config">
+<div id="caddy-editor-error" class="error hidden" role="alert"></div>
+<div id="caddy-editor-warning" class="warning hidden" role="status"></div>
+
+<form method="post" action="{{.Base}}/caddy/config" id="caddy-config-form" data-initial-tab="{{.Data.ActiveTab}}">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
-  <textarea id="caddy-config-raw" name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea>
-  <div class="actions">
-    <button type="submit" name="action" value="format" class="btn">{{icon "file-cog"}}格式化</button>
-    <button type="submit" name="action" value="validate" class="btn">{{icon "check"}}配置检查</button>
-    <button type="submit" name="action" value="save" class="primary">{{icon "save"}}保存</button>
-    <a class="btn" href="{{.Base}}/caddy">{{icon "arrow-left"}}返回</a>
+  <input type="hidden" name="editor_tab" id="caddy-editor-tab" value="{{.Data.ActiveTab}}">
+
+  <div class="config-tabs" role="tablist" aria-label="Caddy 配置区域">
+    <button type="button" class="config-tab active" role="tab" aria-selected="true" aria-controls="caddy-panel-base" data-caddy-tab="base">base</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="caddy-panel-sites" data-caddy-tab="sites">sites</button>
+    <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="caddy-panel-raw" data-caddy-tab="raw">raw</button>
   </div>
+
+  <section class="config-panel" id="caddy-panel-base" role="tabpanel" data-caddy-panel="base">
+    <div class="config-section-head">
+      <div>
+        <h2>全局配置</h2>
+        <p class="muted">编辑 Caddyfile 顶层的全局选项块，内容包含最外层的 <code>{ }</code>。</p>
+      </div>
+    </div>
+    <textarea id="caddy-base-block" rows="22" class="mono wide" spellcheck="false" aria-label="全局配置块" placeholder="{&#10;    email admin@example.com&#10;}"></textarea>
+    <div class="actions">
+      <button type="submit" name="action" value="validate" class="btn">{{icon "check"}}配置检查</button>
+      <button type="submit" name="action" value="save" class="primary">{{icon "save"}}保存</button>
+    </div>
+  </section>
+
+  <section class="config-panel hidden" id="caddy-panel-sites" role="tabpanel" data-caddy-panel="sites">
+    <div class="config-section-head">
+      <div>
+        <h2>站点</h2>
+        <p class="muted">仅列出当前主 Caddyfile 中直接定义的顶层站点块；import 引入的内容不会展开。</p>
+      </div>
+      <button type="button" class="btn" id="caddy-site-add">{{icon "plus"}}添加站点</button>
+    </div>
+    <div class="table-scroll">
+      <table class="config-array-table caddy-sites-table">
+        <thead><tr><th>domain</th><th>操作</th></tr></thead>
+        <tbody id="caddy-sites-rows"></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button type="submit" name="action" value="validate" class="btn">{{icon "check"}}配置检查</button>
+      <button type="submit" name="action" value="save" class="primary">{{icon "save"}}保存</button>
+    </div>
+  </section>
+
+  <section class="config-panel hidden" id="caddy-panel-raw" role="tabpanel" data-caddy-panel="raw">
+    <p class="muted">直接编辑完整主 Caddyfile。切换回 base 或 sites 时会重新解析结构化区域。</p>
+    <textarea id="caddy-config-raw" name="config" rows="32" class="mono wide" spellcheck="false" aria-label="Raw Caddyfile">{{.Data.Config}}</textarea>
+    <div class="actions">
+      <button type="submit" name="action" value="format" class="btn">{{icon "file-cog"}}格式化 Caddyfile</button>
+      <button type="submit" name="action" value="validate" class="btn">{{icon "check"}}配置检查</button>
+      <button type="submit" name="action" value="save" class="primary">{{icon "save"}}保存</button>
+    </div>
+  </section>
 </form>
+
+<dialog id="caddy-site-dialog" class="config-dialog" aria-labelledby="caddy-site-dialog-title">
+  <form method="dialog">
+    <div class="dialog-head">
+      <h2 id="caddy-site-dialog-title">编辑站点</h2>
+      <button type="button" class="icon-btn caddy-site-dialog-close" aria-label="关闭" title="关闭">{{icon "x"}}</button>
+    </div>
+    <div id="caddy-site-dialog-error" class="error hidden" role="alert"></div>
+    <label>domain
+      <input id="caddy-site-domain" placeholder="example.com 或 example.com, www.example.com">
+    </label>
+    <label>站点配置块
+      <textarea id="caddy-site-block" rows="16" class="mono wide" spellcheck="false" placeholder="{&#10;    reverse_proxy 127.0.0.1:8080&#10;}"></textarea>
+      <small class="muted">内容必须包含最外层的 <code>{ }</code>。</small>
+    </label>
+    <div class="actions dialog-actions">
+      <button type="button" class="primary" id="caddy-site-dialog-save">{{icon "save"}}保存到配置</button>
+      <button type="button" class="btn caddy-site-dialog-close">取消</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{.Base}}/static/caddy-config.js"></script>
 {{end}}
