@@ -82,10 +82,108 @@
       fields: [
         { path: "tag", label: "tag", placeholder: "caddy-upstream" },
         { path: "mode", label: "mode", type: "select", options: "outboundModes" },
-        { path: "upstream.protocol", label: "upstream.protocol", type: "select", options: "upstreamProtocols" },
-        { path: "upstream.server", label: "upstream.server", placeholder: "exit.example.com:443" },
-        { path: "upstream.settings.username", label: "upstream.settings.username", placeholder: "用户名" },
-        { path: "upstream.settings.password", label: "upstream.settings.password", type: "password", placeholder: "密码" }
+        { path: "bind.interface", label: "bind.interface", placeholder: "例如 eth0", modes: ["freedom"] },
+        { path: "bind.localIP", label: "bind.localIP", placeholder: "例如 192.0.2.10", modes: ["freedom"] },
+        { path: "upstream.protocol", label: "upstream.protocol", type: "select", options: "upstreamProtocols", modes: ["proxy"] },
+        { path: "upstream.server", label: "upstream.server", placeholder: "exit.example.com:443", modes: ["proxy"] },
+        {
+          path: "upstream.settings.udpMaxPacketBytes",
+          label: "upstream.settings.udpMaxPacketBytes",
+          type: "number",
+          placeholder: "8192",
+          min: 512,
+          max: 65245,
+          modes: ["proxy"],
+          protocols: ["socks"]
+        },
+        {
+          path: "upstream.settings.username",
+          label: "upstream.settings.username",
+          placeholder: "用户名",
+          modes: ["proxy"],
+          protocols: ["socks", "https"]
+        },
+        {
+          path: "upstream.settings.password",
+          label: "upstream.settings.password",
+          type: "password",
+          placeholder: "密码",
+          modes: ["proxy"],
+          protocols: ["socks", "https"]
+        },
+        {
+          path: "upstream.settings.tlsServerName",
+          label: "upstream.settings.tlsServerName",
+          placeholder: "exit.example.com",
+          modes: ["proxy"],
+          protocols: ["https"]
+        },
+        {
+          path: "upstream.settings.caFile",
+          label: "upstream.settings.caFile",
+          placeholder: "/etc/ssl/private/upstream-ca.pem",
+          modes: ["proxy"],
+          protocols: ["https"]
+        },
+        {
+          path: "upstream.settings.insecureSkipVerify",
+          label: "upstream.settings.insecureSkipVerify",
+          type: "checkbox",
+          modes: ["proxy"],
+          protocols: ["https"]
+        },
+        {
+          path: "upstream.settings.enableHTTP2",
+          label: "upstream.settings.enableHTTP2",
+          type: "checkbox",
+          defaultChecked: true,
+          modes: ["proxy"],
+          protocols: ["https"]
+        },
+        {
+          path: "upstream.settings.connectTimeoutMs",
+          label: "upstream.settings.connectTimeoutMs",
+          type: "number",
+          placeholder: "10000",
+          min: 1,
+          max: 120000,
+          modes: ["proxy"],
+          protocols: ["https"]
+        },
+        { path: "wireguard.secretKey", label: "wireguard.secretKey", type: "password", modes: ["wireguard"] },
+        { path: "wireguard.publicKey", label: "wireguard.publicKey", modes: ["wireguard"] },
+        {
+          path: "wireguard.address",
+          label: "wireguard.address",
+          type: "list",
+          placeholder: "例如 10.0.0.2/32，每行一个",
+          modes: ["wireguard"]
+        },
+        {
+          path: "wireguard.dns",
+          label: "wireguard.dns",
+          type: "list",
+          placeholder: "例如 1.1.1.1，每行一个",
+          modes: ["wireguard"]
+        },
+        {
+          path: "wireguard.mtu",
+          label: "wireguard.mtu",
+          type: "number",
+          placeholder: "1420",
+          min: 576,
+          max: 65535,
+          modes: ["wireguard"]
+        },
+        {
+          path: "wireguard.peers",
+          label: "wireguard.peers",
+          type: "json",
+          jsonKind: "array",
+          rows: 9,
+          placeholder: '[{"publicKey":"...","endpoint":"vpn.example.com:51820","allowedIPs":["0.0.0.0/0","::/0"],"keepAlive":25}]',
+          modes: ["wireguard"]
+        }
       ]
     },
     "routing.rules": {
@@ -338,6 +436,19 @@
     });
   }
 
+  function setSelectValue(select, value) {
+    value = value == null ? "" : String(value);
+    if (value !== "" && !Array.prototype.some.call(select.options, function (option) {
+      return option.value === value;
+    })) {
+      var current = document.createElement("option");
+      current.value = value;
+      current.textContent = value + "（当前配置）";
+      select.appendChild(current);
+    }
+    select.value = value;
+  }
+
   function renderTopFields() {
     var control = isObject(state.control) ? state.control : {};
     document.getElementById("bypass-control-enabled").checked = control.enabled === true;
@@ -345,11 +456,11 @@
     document.getElementById("bypass-control-mode").value = control.mode == null ? "" : control.mode;
 
     var routing = isObject(state.routing) ? state.routing : {};
-    document.getElementById("bypass-routing-domain-strategy").value = routing.domainStrategy == null ? "" : routing.domainStrategy;
+    setSelectValue(document.getElementById("bypass-routing-domain-strategy"), routing.domainStrategy);
     document.getElementById("bypass-routing-final-outbound").value = routing.finalOutboundTag == null ? "" : routing.finalOutboundTag;
 
     var dns = isObject(state.dns) ? state.dns : {};
-    document.getElementById("bypass-dns-query-strategy").value = dns.queryStrategy == null ? "" : dns.queryStrategy;
+    setSelectValue(document.getElementById("bypass-dns-query-strategy"), dns.queryStrategy);
   }
 
   function renderAll() {
@@ -375,6 +486,10 @@
 
   function fieldValue(item, field) {
     var value = getPath(item, field.path);
+    if (field.type === "checkbox") return value === undefined ? field.defaultChecked === true : value === true;
+    if (field.type === "json") {
+      return value == null ? "" : JSON.stringify(value, null, 2);
+    }
     if (field.type === "multi-select") {
       if (typeof value === "string") {
         return value.split(",").map(function (part) { return part.trim(); }).filter(Boolean);
@@ -386,6 +501,93 @@
       return value == null ? "" : String(value);
     }
     return value == null ? "" : String(value);
+  }
+
+  function normalizedOutboundMode(value) {
+    value = String(value || "").trim().toLowerCase();
+    if (value === "direct") return "freedom";
+    if (value === "block") return "blackhole";
+    if (value === "wg") return "wireguard";
+    return value;
+  }
+
+  function normalizedUpstreamProtocol(value) {
+    value = String(value || "").trim().toLowerCase();
+    return value === "socks5" ? "socks" : value;
+  }
+
+  function isKnownOutboundMode(value) {
+    return ["freedom", "blackhole", "proxy", "wireguard"].indexOf(normalizedOutboundMode(value)) !== -1;
+  }
+
+  function dialogFieldElement(path) {
+    if (!editing) return null;
+    var fields = definitions[editing.kind].fields;
+    for (var i = 0; i < fields.length; i++) {
+      if (fields[i].path === path) return document.getElementById("bypass-dialog-field-" + i);
+    }
+    return null;
+  }
+
+  function dialogFieldValue(path) {
+    var input = dialogFieldElement(path);
+    if (!input) return "";
+    return input.type === "checkbox" ? input.checked : input.value;
+  }
+
+  function outboundFieldActive(field) {
+    if (editing == null || editing.kind !== "outbounds") return true;
+    var mode = normalizedOutboundMode(dialogFieldValue("mode"));
+    if (field.modes && field.modes.indexOf(mode) === -1) return false;
+    if (field.protocols) {
+      var protocol = normalizedUpstreamProtocol(dialogFieldValue("upstream.protocol"));
+      if (field.protocols.indexOf(protocol) === -1) return false;
+    }
+    return true;
+  }
+
+  function updateOutboundFields() {
+    if (editing == null || editing.kind !== "outbounds") return;
+    var definition = definitions.outbounds;
+    var mode = normalizedOutboundMode(dialogFieldValue("mode"));
+    var protocolInput = dialogFieldElement("upstream.protocol");
+    if (mode === "proxy" && protocolInput && protocolInput.value === "") {
+      protocolInput.value = "socks";
+    }
+    definition.fields.forEach(function (field, index) {
+      var input = document.getElementById("bypass-dialog-field-" + index);
+      if (!input || !input.parentElement) return;
+      input.parentElement.classList.toggle("hidden", !outboundFieldActive(field));
+    });
+
+    var help = document.getElementById("bypass-outbound-mode-help");
+    if (!help) return;
+    var protocol = normalizedUpstreamProtocol(dialogFieldValue("upstream.protocol"));
+    var message = "";
+    if (mode === "") message = "请选择 mode，面板会显示该出站方式需要的配置项。";
+    else if (mode === "freedom") message = "freedom 直接连接目标；bind 为可选项，可用于指定出口网卡或源地址。";
+    else if (mode === "blackhole") message = "blackhole 会直接阻断匹配流量，不需要额外配置。";
+    else if (mode === "proxy" && protocol === "") message = "proxy 需要 upstream.server；选择 protocol 后会显示对应的协议设置。";
+    else if (mode === "proxy" && protocol === "socks") message = "SOCKS 上游支持 TCP/UDP；udpMaxPacketBytes 可留空使用默认值。";
+    else if (mode === "proxy" && protocol === "https") message = "HTTPS 上游使用 TLS + HTTP CONNECT，仅支持 TCP。";
+    else if (mode === "proxy") message = "当前 upstream.protocol 尚未被此版本面板结构化，原有协议设置会保留。";
+    else if (mode === "wireguard") message = "WireGuard 需要密钥、本地隧道地址和至少一个 peer；peers 使用 JSON 数组编辑。";
+    else message = "当前 mode 尚未被此版本面板结构化，原有字段会保留在“其他字段 JSON”中。";
+    help.textContent = message;
+    help.classList.toggle("hidden", message === "");
+  }
+
+  function removeInactiveOutboundRoots(item) {
+    var mode = normalizedOutboundMode(dialogFieldValue("mode"));
+    if (!isKnownOutboundMode(mode)) return;
+    var activeRoot = {
+      freedom: "bind",
+      proxy: "upstream",
+      wireguard: "wireguard"
+    }[mode] || "";
+    ["bind", "upstream", "wireguard"].forEach(function (root) {
+      if (root !== activeRoot) deletePath(item, root);
+    });
   }
 
   function tagOptions(path) {
@@ -438,9 +640,10 @@
     });
   }
 
-  function extraFields(item, fields) {
+  function extraFields(item, fields, kind) {
     var extra = clone(item);
     fields.forEach(function (field) {
+      if (kind === "outbounds" && field.modes && !isKnownOutboundMode(item.mode)) return;
       deletePath(extra, field.path);
     });
     return extra;
@@ -448,7 +651,7 @@
 
   function createDialogField(field, item, index) {
     var label = document.createElement("label");
-    label.textContent = field.label;
+    if (field.type !== "checkbox") label.textContent = field.label;
     var input;
     var currentValue = fieldValue(item, field);
     if (field.type === "select" || field.type === "multi-select") {
@@ -456,28 +659,46 @@
       input.multiple = field.type === "multi-select";
       if (input.multiple) input.size = Math.min(5, Math.max(2, fieldOptions(field, currentValue).length));
       appendSelectOptions(input, field, currentValue);
-    } else if (field.type === "list") {
+    } else if (field.type === "list" || field.type === "json") {
       input = document.createElement("textarea");
-      input.rows = 3;
+      input.rows = field.rows || 3;
       input.className = "mono wide";
     } else {
       input = document.createElement("input");
       input.type = field.type || "text";
-      if (field.type === "number") input.step = "1";
+      if (field.type === "number") {
+        input.step = "1";
+        if (field.min !== undefined) input.min = String(field.min);
+        if (field.max !== undefined) input.max = String(field.max);
+      }
     }
     input.id = "bypass-dialog-field-" + index;
-    if (field.type !== "select" && field.type !== "multi-select") input.value = currentValue;
+    if (field.type === "checkbox") {
+      input.checked = currentValue === true;
+    } else if (field.type !== "select" && field.type !== "multi-select") {
+      input.value = currentValue;
+    }
     input.placeholder = field.placeholder || "";
-    if (field.type === "list" || field.type === "multi-select") {
+    if (field.type === "checkbox") {
+      label.className = "check";
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(" " + field.label));
+    } else if (field.type === "list" || field.type === "multi-select" || field.type === "json") {
       var hint = document.createElement("small");
       hint.className = "muted";
-      hint.textContent = field.type === "multi-select" ? "可多选；桌面端按 Ctrl/Command 选择多个值" : "每行填写一个值";
+      if (field.type === "multi-select") hint.textContent = "可多选；桌面端按 Ctrl/Command 选择多个值";
+      else if (field.type === "json") hint.textContent = field.jsonKind === "array" ? "填写 JSON 数组" : "填写有效 JSON";
+      else hint.textContent = "每行填写一个值";
       label.appendChild(input);
       label.appendChild(hint);
     } else {
       label.appendChild(input);
     }
     dialogFields.appendChild(label);
+    if (editing && editing.kind === "outbounds" &&
+        (field.path === "mode" || field.path === "upstream.protocol")) {
+      input.addEventListener("change", updateOutboundFields);
+    }
   }
 
   function openItemDialog(kind, index) {
@@ -497,7 +718,14 @@
     definition.fields.forEach(function (field, fieldIndex) {
       createDialogField(field, item, fieldIndex);
     });
-    dialogExtra.value = JSON.stringify(extraFields(item, definition.fields), null, 2);
+    if (kind === "outbounds") {
+      var modeHelp = document.createElement("p");
+      modeHelp.id = "bypass-outbound-mode-help";
+      modeHelp.className = "notice hidden";
+      dialogFields.appendChild(modeHelp);
+      updateOutboundFields();
+    }
+    dialogExtra.value = JSON.stringify(extraFields(item, definition.fields, kind), null, 2);
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "open");
     var first = dialogFields.querySelector("input, textarea");
@@ -514,26 +742,47 @@
       if (containsUnsafeInteger(dialogExtra.value || "{}")) {
         throw new Error("其他字段包含超出 JavaScript 安全范围的整数，请改用 Raw Tab");
       }
+      if (editing.kind === "outbounds") removeInactiveOutboundRoots(item);
       definition.fields.forEach(function (field, fieldIndex) {
         var input = document.getElementById("bypass-dialog-field-" + fieldIndex);
-        var value = input.value;
+        var active = editing.kind !== "outbounds" || outboundFieldActive(field);
+        var manage = active || !field.modes || isKnownOutboundMode(dialogFieldValue("mode"));
+        if (!manage) return;
         deletePath(item, field.path);
+        if (!active) return;
+        var value = input.value;
         if (field.type === "multi-select") {
           value = Array.prototype.slice.call(input.selectedOptions).map(function (option) {
             return option.value;
           });
           if (value.length === 0) return;
+        } else if (field.type === "checkbox") {
+          value = input.checked;
         } else if (value === "") {
           return;
         } else if (field.type === "number") {
           var number = Number(value);
           if (!Number.isSafeInteger(number)) throw new Error(field.label + " 必须是安全整数");
+          if (field.min !== undefined && number < field.min) {
+            throw new Error(field.label + " 不能小于 " + field.min);
+          }
+          if (field.max !== undefined && number > field.max) {
+            throw new Error(field.label + " 不能大于 " + field.max);
+          }
           value = number;
         } else if (field.type === "list") {
           value = value.split(/\r?\n/).map(function (part) {
             return part.trim();
           }).filter(Boolean);
           if (value.length === 0) return;
+        } else if (field.type === "json") {
+          if (containsUnsafeInteger(value)) {
+            throw new Error(field.label + " 包含超出 JavaScript 安全范围的整数，请改用 Raw Tab");
+          }
+          value = JSON.parse(value);
+          if (field.jsonKind === "array" && !Array.isArray(value)) {
+            throw new Error(field.label + " 必须是 JSON 数组");
+          }
         }
         setPath(item, field.path, value);
       });

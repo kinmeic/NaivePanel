@@ -56,6 +56,8 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	if !strings.Contains(bypassHTML, `id="json-format-btn"`) ||
 		!strings.Contains(bypassHTML, `id="bypass-item-dialog"`) ||
 		!strings.Contains(bypassHTML, `<select id="bypass-routing-domain-strategy">`) ||
+		!strings.Contains(bypassHTML, `<select id="bypass-dns-query-strategy">`) ||
+		!strings.Contains(bypassHTML, `<option value="UseSystem">UseSystem</option>`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="inbounds"`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="outbounds"`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="routing.rules"`) ||
@@ -323,6 +325,11 @@ func TestBypassConfigDialogsUseValidatedSelectOptions(t *testing.T) {
 		`{ value: "proxy", label: "proxy（上游代理）" }`,
 		`{ value: "wireguard", label: "wireguard" }`,
 		`{ value: "https", label: "https（HTTP CONNECT over TLS）" }`,
+		`{ path: "bind.interface", label: "bind.interface", placeholder: "例如 eth0", modes: ["freedom"] }`,
+		`path: "upstream.settings.udpMaxPacketBytes"`,
+		`path: "upstream.settings.enableHTTP2"`,
+		`path: "wireguard.secretKey"`,
+		`path: "wireguard.peers"`,
 		`{ path: "inboundTag", label: "inboundTag", type: "multi-select", optionsFrom: "inbounds" }`,
 		`{ path: "network", label: "network", type: "multi-select", options: "routingNetworks" }`,
 		`{ path: "outboundTag", label: "outboundTag", type: "select", optionsFrom: "outbounds" }`,
@@ -336,6 +343,17 @@ func TestBypassConfigDialogsUseValidatedSelectOptions(t *testing.T) {
 	}
 	if !strings.Contains(source, `var item = index === null ? {} : getPath(state, kind)[index];`) {
 		t.Fatal("add and edit dialogs must share the same field-definition path")
+	}
+	for _, behavior := range []string{
+		`input.addEventListener("change", updateOutboundFields);`,
+		`input.parentElement.classList.toggle("hidden", !outboundFieldActive(field));`,
+		`if (editing.kind === "outbounds") removeInactiveOutboundRoots(item);`,
+		`if (!active) return;`,
+		`field.jsonKind === "array" && !Array.isArray(value)`,
+	} {
+		if !strings.Contains(source, behavior) {
+			t.Fatalf("dynamic outbound dialog behavior missing %q", behavior)
+		}
 	}
 }
 

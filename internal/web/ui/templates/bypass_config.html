@@ -112,7 +112,13 @@
     <fieldset>
       <legend>DNS 设置</legend>
       <label>queryStrategy
-        <input id="bypass-dns-query-strategy" list="bypass-query-strategies" placeholder="UseIP">
+        <select id="bypass-dns-query-strategy">
+          <option value="">请选择</option>
+          <option value="UseIP">UseIP</option>
+          <option value="UseIPv4">UseIPv4</option>
+          <option value="UseIPv6">UseIPv6</option>
+          <option value="UseSystem">UseSystem</option>
+        </select>
       </label>
     </fieldset>
     <div class="config-section-head">
@@ -141,9 +147,6 @@
     </div>
   </section>
 
-  <datalist id="bypass-query-strategies">
-    <option value="UseIP"><option value="UseIPv4"><option value="UseIPv6">
-  </datalist>
 </form>
 
 <dialog id="bypass-item-dialog" class="config-dialog" aria-labelledby="bypass-dialog-title">
