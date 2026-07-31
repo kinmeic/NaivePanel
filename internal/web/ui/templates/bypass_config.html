@@ -80,7 +80,12 @@
       <legend>路由设置</legend>
       <div class="config-field-grid">
         <label>domainStrategy
-          <input id="bypass-routing-domain-strategy" list="bypass-domain-strategies" placeholder="IpIfNonMatch">
+          <select id="bypass-routing-domain-strategy">
+            <option value="">请选择</option>
+            <option value="AsIs">AsIs</option>
+            <option value="IpIfNonMatch">IpIfNonMatch</option>
+            <option value="IpOnDemand">IpOnDemand</option>
+          </select>
         </label>
         <label>finalOutboundTag
           <input id="bypass-routing-final-outbound" placeholder="direct">
@@ -136,9 +141,6 @@
     </div>
   </section>
 
-  <datalist id="bypass-domain-strategies">
-    <option value="AsIs"><option value="IPIfNonMatch"><option value="IPOnDemand"><option value="IpIfNonMatch">
-  </datalist>
   <datalist id="bypass-query-strategies">
     <option value="UseIP"><option value="UseIPv4"><option value="UseIPv6">
   </datalist>

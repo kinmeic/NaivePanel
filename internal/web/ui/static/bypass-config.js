@@ -19,6 +19,40 @@
   var state = {};
   var rawDirty = false;
   var editing = null;
+  // Canonical values follow BypassCore's validators and JSON model:
+  // app/inbound/validate.go, app/outbound/config.go and infra/conf/router.go.
+  // Existing aliases or future values are appended by fieldOptions so opening
+  // an older/newer config in the panel never silently discards its value.
+  var optionSets = {
+    inboundTypes: [
+      { value: "redirect", label: "redirect（透明代理 TCP）" },
+      { value: "tproxy", label: "tproxy（透明代理 TCP/UDP）" },
+      { value: "socks", label: "socks（SOCKS5）" },
+      { value: "dns", label: "dns" },
+      { value: "dot", label: "dot（DNS over TLS）" },
+      { value: "doh", label: "doh（DNS over HTTPS）" }
+    ],
+    inboundNetworks: [
+      { value: "tcp", label: "tcp" },
+      { value: "udp", label: "udp" },
+      { value: "tcp,udp", label: "tcp,udp" }
+    ],
+    outboundModes: [
+      { value: "freedom", label: "freedom（直连）" },
+      { value: "blackhole", label: "blackhole（阻断）" },
+      { value: "proxy", label: "proxy（上游代理）" },
+      { value: "wireguard", label: "wireguard" }
+    ],
+    upstreamProtocols: [
+      { value: "socks", label: "socks（SOCKS5）" },
+      { value: "https", label: "https（HTTP CONNECT over TLS）" }
+    ],
+    routingNetworks: [
+      { value: "tcp", label: "tcp" },
+      { value: "udp", label: "udp" },
+      { value: "unix", label: "unix" }
+    ]
+  };
 
   var SVG_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide">';
   var EDIT_SVG = SVG_OPEN +
@@ -35,9 +69,9 @@
       columns: 6,
       fields: [
         { path: "tag", label: "tag", placeholder: "caddy-in" },
-        { path: "type", label: "type", placeholder: "socks" },
+        { path: "type", label: "type", type: "select", options: "inboundTypes" },
         { path: "listen", label: "listen", placeholder: "127.0.0.1" },
-        { path: "network", label: "network", placeholder: "tcp" },
+        { path: "network", label: "network", type: "select", options: "inboundNetworks" },
         { path: "port", label: "port", type: "number", placeholder: "1080" }
       ]
     },
@@ -47,8 +81,8 @@
       columns: 5,
       fields: [
         { path: "tag", label: "tag", placeholder: "caddy-upstream" },
-        { path: "mode", label: "mode", placeholder: "proxy" },
-        { path: "upstream.protocol", label: "upstream.protocol", placeholder: "https" },
+        { path: "mode", label: "mode", type: "select", options: "outboundModes" },
+        { path: "upstream.protocol", label: "upstream.protocol", type: "select", options: "upstreamProtocols" },
         { path: "upstream.server", label: "upstream.server", placeholder: "exit.example.com:443" },
         { path: "upstream.settings.username", label: "upstream.settings.username", placeholder: "用户名" },
         { path: "upstream.settings.password", label: "upstream.settings.password", type: "password", placeholder: "密码" }
@@ -60,13 +94,13 @@
       columns: 4,
       fields: [
         { path: "ruleTag", label: "ruleTag", placeholder: "block-cn-domain" },
-        { path: "inboundTag", label: "inboundTag", type: "list", placeholder: "每行一个入站 tag" },
+        { path: "inboundTag", label: "inboundTag", type: "multi-select", optionsFrom: "inbounds" },
         { path: "domain", label: "domain", type: "list", placeholder: "例如 geosite:cn，每行一个" },
         { path: "ip", label: "ip", type: "list", placeholder: "例如 geoip:cn，每行一个" },
         { path: "port", label: "port", placeholder: "例如 80,443 或 1000-2000" },
-        { path: "network", label: "network", placeholder: "tcp 或 udp" },
+        { path: "network", label: "network", type: "multi-select", options: "routingNetworks" },
         { path: "protocol", label: "protocol", type: "list", placeholder: "每行一个协议" },
-        { path: "outboundTag", label: "outboundTag", placeholder: "direct" }
+        { path: "outboundTag", label: "outboundTag", type: "select", optionsFrom: "outbounds" }
       ]
     },
     "dns.servers": {
@@ -76,7 +110,7 @@
       fields: [
         { path: "address", label: "address", placeholder: "1.1.1.1" },
         { path: "tag", label: "tag", placeholder: "routing-dns" },
-        { path: "outboundTag", label: "outboundTag", placeholder: "direct" }
+        { path: "outboundTag", label: "outboundTag", type: "select", optionsFrom: "outbounds" }
       ]
     }
   };
@@ -341,11 +375,67 @@
 
   function fieldValue(item, field) {
     var value = getPath(item, field.path);
+    if (field.type === "multi-select") {
+      if (typeof value === "string") {
+        return value.split(",").map(function (part) { return part.trim(); }).filter(Boolean);
+      }
+      return Array.isArray(value) ? value.map(String) : [];
+    }
     if (field.type === "list") {
       if (Array.isArray(value)) return value.join("\n");
       return value == null ? "" : String(value);
     }
     return value == null ? "" : String(value);
+  }
+
+  function tagOptions(path) {
+    var items = getPath(state, path);
+    if (!Array.isArray(items)) return [];
+    return items.reduce(function (options, item) {
+      if (!isObject(item) || typeof item.tag !== "string" || item.tag.trim() === "") return options;
+      var tag = item.tag.trim();
+      if (!options.some(function (option) { return option.value === tag; })) {
+        options.push({ value: tag, label: tag });
+      }
+      return options;
+    }, []);
+  }
+
+  function fieldOptions(field, currentValue) {
+    var options = [];
+    if (field.options && Array.isArray(optionSets[field.options])) {
+      options = optionSets[field.options].map(function (option) {
+        return { value: option.value, label: option.label };
+      });
+    } else if (field.optionsFrom) {
+      options = tagOptions(field.optionsFrom);
+    }
+    var current = Array.isArray(currentValue) ? currentValue : [currentValue];
+    current.forEach(function (value) {
+      if (value === undefined || value === null || value === "") return;
+      value = String(value);
+      if (!options.some(function (option) { return option.value === value; })) {
+        options.push({ value: value, label: value + "（当前配置）" });
+      }
+    });
+    return options;
+  }
+
+  function appendSelectOptions(select, field, currentValue) {
+    if (field.type !== "multi-select") {
+      var empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "请选择";
+      select.appendChild(empty);
+    }
+    var selectedValues = Array.isArray(currentValue) ? currentValue : [currentValue];
+    fieldOptions(field, currentValue).forEach(function (item) {
+      var option = document.createElement("option");
+      option.value = item.value;
+      option.textContent = item.label;
+      option.selected = selectedValues.indexOf(item.value) !== -1;
+      select.appendChild(option);
+    });
   }
 
   function extraFields(item, fields) {
@@ -360,7 +450,13 @@
     var label = document.createElement("label");
     label.textContent = field.label;
     var input;
-    if (field.type === "list") {
+    var currentValue = fieldValue(item, field);
+    if (field.type === "select" || field.type === "multi-select") {
+      input = document.createElement("select");
+      input.multiple = field.type === "multi-select";
+      if (input.multiple) input.size = Math.min(5, Math.max(2, fieldOptions(field, currentValue).length));
+      appendSelectOptions(input, field, currentValue);
+    } else if (field.type === "list") {
       input = document.createElement("textarea");
       input.rows = 3;
       input.className = "mono wide";
@@ -370,12 +466,12 @@
       if (field.type === "number") input.step = "1";
     }
     input.id = "bypass-dialog-field-" + index;
-    input.value = fieldValue(item, field);
+    if (field.type !== "select" && field.type !== "multi-select") input.value = currentValue;
     input.placeholder = field.placeholder || "";
-    if (field.type === "list") {
+    if (field.type === "list" || field.type === "multi-select") {
       var hint = document.createElement("small");
       hint.className = "muted";
-      hint.textContent = "每行填写一个值";
+      hint.textContent = field.type === "multi-select" ? "可多选；桌面端按 Ctrl/Command 选择多个值" : "每行填写一个值";
       label.appendChild(input);
       label.appendChild(hint);
     } else {
@@ -422,8 +518,14 @@
         var input = document.getElementById("bypass-dialog-field-" + fieldIndex);
         var value = input.value;
         deletePath(item, field.path);
-        if (value === "") return;
-        if (field.type === "number") {
+        if (field.type === "multi-select") {
+          value = Array.prototype.slice.call(input.selectedOptions).map(function (option) {
+            return option.value;
+          });
+          if (value.length === 0) return;
+        } else if (value === "") {
+          return;
+        } else if (field.type === "number") {
           var number = Number(value);
           if (!Number.isSafeInteger(number)) throw new Error(field.label + " 必须是安全整数");
           value = number;

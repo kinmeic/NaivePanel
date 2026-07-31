@@ -59,7 +59,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.4.2
+VER=v0.4.3
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"

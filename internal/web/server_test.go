@@ -55,6 +55,7 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	bypassHTML := recorder.Body.String()
 	if !strings.Contains(bypassHTML, `id="json-format-btn"`) ||
 		!strings.Contains(bypassHTML, `id="bypass-item-dialog"`) ||
+		!strings.Contains(bypassHTML, `<select id="bypass-routing-domain-strategy">`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="inbounds"`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="outbounds"`) ||
 		!strings.Contains(bypassHTML, `data-bypass-add="routing.rules"`) ||
@@ -300,6 +301,41 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	listHTML := recorder.Body.String()
 	if !strings.Contains(listHTML, `class="site-action-buttons"`) {
 		t.Fatalf("site action alignment wrapper missing:\n%s", listHTML)
+	}
+}
+
+func TestBypassConfigDialogsUseValidatedSelectOptions(t *testing.T) {
+	script, err := uiFS.ReadFile("ui/static/bypass-config.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, required := range []string{
+		`{ value: "redirect", label: "redirect（透明代理 TCP）" }`,
+		`{ value: "tproxy", label: "tproxy（透明代理 TCP/UDP）" }`,
+		`{ value: "socks", label: "socks（SOCKS5）" }`,
+		`{ value: "dns", label: "dns" }`,
+		`{ value: "dot", label: "dot（DNS over TLS）" }`,
+		`{ value: "doh", label: "doh（DNS over HTTPS）" }`,
+		`{ value: "tcp,udp", label: "tcp,udp" }`,
+		`{ value: "freedom", label: "freedom（直连）" }`,
+		`{ value: "blackhole", label: "blackhole（阻断）" }`,
+		`{ value: "proxy", label: "proxy（上游代理）" }`,
+		`{ value: "wireguard", label: "wireguard" }`,
+		`{ value: "https", label: "https（HTTP CONNECT over TLS）" }`,
+		`{ path: "inboundTag", label: "inboundTag", type: "multi-select", optionsFrom: "inbounds" }`,
+		`{ path: "network", label: "network", type: "multi-select", options: "routingNetworks" }`,
+		`{ path: "outboundTag", label: "outboundTag", type: "select", optionsFrom: "outbounds" }`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("BypassCore dialog select definition missing %q", required)
+		}
+	}
+	if strings.Count(source, `optionsFrom: "outbounds"`) != 2 {
+		t.Fatalf("routing and DNS outboundTag must both use configured outbound tags")
+	}
+	if !strings.Contains(source, `var item = index === null ? {} : getPath(state, kind)[index];`) {
+		t.Fatal("add and edit dialogs must share the same field-definition path")
 	}
 }
 

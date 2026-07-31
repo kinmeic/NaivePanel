@@ -371,6 +371,10 @@ button:disabled { opacity: .65; cursor: wait; }
 .config-extra-fields summary { color: var(--muted); cursor: pointer; }
 .config-extra-fields p { margin: 8px 0 4px; }
 .config-dialog label small { display: block; margin-top: 4px; }
+.config-dialog select { color-scheme: dark; }
+.config-dialog select[multiple] { padding: 6px; }
+.config-dialog select[multiple] option { padding: 4px 6px; border-radius: 4px; }
+.config-dialog select[multiple] option:checked { background: var(--accent); color: #fff; }
 
 .loading { display: flex; align-items: center; gap: 10px; color: var(--muted); padding: 28px 4px; }
 .spinner {
