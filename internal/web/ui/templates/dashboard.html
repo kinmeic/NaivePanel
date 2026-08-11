@@ -7,6 +7,8 @@
     <p>域名：<strong>{{.Data.Domain}}</strong></p>
     <p>访问地址：<code>https://{{.Data.HostSite}}{{.Data.BasePath}}/</code></p>
     <p>内部监听：<code>{{.Data.Listen}}</code></p>
+    <p>公网 IPv4：{{if .Data.PublicIPv4}}<code>{{.Data.PublicIPv4}}</code>{{else}}<span class="muted">获取失败</span>{{end}}</p>
+    <p>公网 IPv6：{{if .Data.PublicIPv6}}<code>{{.Data.PublicIPv6}}</code>{{else}}<span class="muted">无 / 获取失败</span>{{end}}</p>
     <p>MFA：{{if .Data.TOTPEnabled}}<span class="ok">已启用</span>{{else}}<span class="warn">未启用（建议到 设置 开启）</span>{{end}}</p>
   </div>
   <div class="card">

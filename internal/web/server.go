@@ -19,6 +19,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/caddymgr"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/sites"
+	"github.com/kinmeic/NaivePanel/internal/terminal"
 )
 
 //go:embed ui/templates ui/static
@@ -29,6 +30,7 @@ type Server struct {
 	Cfg      *config.Config
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
+	Terminal *terminal.Manager
 	Sessions *auth.Store
 	Limiter  *auth.Limiter
 	Version  string
@@ -53,6 +55,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		Cfg:      cfg,
 		Caddy:    caddymgr.New(cfg),
 		Bypass:   bypasscore.New(cfg),
+		Terminal: terminal.New(cfg),
 		Sessions: auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
 		Limiter:  auth.NewLimiter(5, 15*time.Minute),
 		Version:  version,
@@ -149,6 +152,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
 
+	s.mux.HandleFunc("GET "+bp+"/terminal", s.protect(s.handleTerminal))
+	s.mux.HandleFunc("POST "+bp+"/terminal/install", s.protect(s.handleTerminalInstall))
+	s.mux.HandleFunc("POST "+bp+"/terminal/service", s.protect(s.handleTerminalService))
+	// ttyd reverse proxy (HTTP + WebSocket upgrade), session-gated like
+	// every other panel route.
+	s.mux.Handle(bp+"/terminal/ui/", s.terminalUIProxy())
+
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
 	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
 	s.mux.HandleFunc("POST "+bp+"/geo/update", s.protect(s.handleGeoUpdate))
@@ -184,12 +194,18 @@ func (s *Server) proxyGate(next http.Handler) http.Handler {
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	// ttyd serves its own SPA (inline bootstrap script) and must be framable
+	// by the terminal page, so proxied ttyd responses skip the panel's
+	// strict CSP and frame denial.
+	uiPrefix := s.Cfg.BasePath + "/terminal/ui"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Frame-Options", "DENY")
+		if !strings.HasPrefix(r.URL.Path, uiPrefix) {
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }

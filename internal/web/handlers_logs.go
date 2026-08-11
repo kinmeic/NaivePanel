@@ -12,6 +12,7 @@ import (
 var logServices = map[string]string{
 	"caddy":      "caddy",
 	"bypasscore": "bypasscore",
+	"ttyd":       "ttyd",
 }
 
 // handleLogs shows the recent journal of Caddy or BypassCore.

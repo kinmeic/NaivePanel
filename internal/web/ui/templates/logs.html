@@ -4,6 +4,7 @@
 <div class="logbar">
   <a class="btn {{if eq .Data.Service "caddy"}}active{{end}}" href="{{.Base}}/logs?service=caddy&lines={{.Data.Lines}}">{{icon "file-cog"}}Caddy</a>
   <a class="btn {{if eq .Data.Service "bypasscore"}}active{{end}}" href="{{.Base}}/logs?service=bypasscore&lines={{.Data.Lines}}">{{icon "route"}}BypassCore</a>
+  <a class="btn {{if eq .Data.Service "ttyd"}}active{{end}}" href="{{.Base}}/logs?service=ttyd&lines={{.Data.Lines}}">{{icon "terminal"}}ttyd</a>
   <span class="muted">行数：</span>
   <a class="btn {{if eq .Data.Lines 100}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=100">100</a>
   <a class="btn {{if eq .Data.Lines 200}}active{{end}}" href="{{.Base}}/logs?service={{.Data.Service}}&lines=200">200</a>

@@ -28,6 +28,8 @@ const (
 	DefaultBypassConf   = "/etc/bypasscore/config.json"
 	DefaultBypassSock   = "/run/bypasscore/control.sock"
 	DefaultBypassWork   = "/etc/bypasscore"
+	DefaultTTYDBin      = "/usr/local/bin/ttyd"
+	DefaultTTYDPort     = 7681
 	DefaultSessionTTLH  = 12
 	DefaultSocksPort    = 1080
 	maxBackupsPerTarget = 20
@@ -40,6 +42,14 @@ type BypassCore struct {
 	ConfigPath  string `yaml:"config_path"`
 	ControlSock string `yaml:"control_sock"`
 	WorkDir     string `yaml:"work_dir"`
+}
+
+// Terminal holds the ttyd web-terminal settings. ttyd listens on localhost
+// only; the panel reverse-proxies it under base_path/terminal/ui so panel
+// session auth is the only gate.
+type Terminal struct {
+	BinPath string `yaml:"bin_path"`
+	Port    int    `yaml:"port"`
 }
 
 // Geo holds geodata update settings.
@@ -80,6 +90,7 @@ type Config struct {
 
 	Caddy      CaddyPaths   `yaml:"caddy"`
 	BypassCore BypassCore   `yaml:"bypasscore"`
+	Terminal   Terminal     `yaml:"terminal"`
 	Geo        Geo          `yaml:"geo"`
 	BackupDir  string       `yaml:"backup_dir"`
 	Sites      []sites.Site `yaml:"sites"`
@@ -123,6 +134,12 @@ func (c *Config) SetDefaults() {
 	}
 	if c.BypassCore.WorkDir == "" {
 		c.BypassCore.WorkDir = DefaultBypassWork
+	}
+	if c.Terminal.BinPath == "" {
+		c.Terminal.BinPath = DefaultTTYDBin
+	}
+	if c.Terminal.Port <= 0 {
+		c.Terminal.Port = DefaultTTYDPort
 	}
 	if c.Geo.Dir == "" {
 		c.Geo.Dir = c.BypassCore.WorkDir

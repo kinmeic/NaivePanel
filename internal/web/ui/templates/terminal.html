@@ -1,0 +1,38 @@
+{{define "content"}}
+<h1>终端</h1>
+<div class="cards">
+  <div class="card">
+    <h3>{{icon "package"}}安装状态</h3>
+    {{if .Data.Installed}}
+      <p><span class="ok">已安装</span> <span class="mono">{{.Data.Version}}</span></p>
+      <p>服务：{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</p>
+    {{else}}
+      <p><span class="warn">未安装</span></p>
+      <p class="muted">终端功能由 ttyd 提供，只监听 127.0.0.1:{{.Data.Port}}，经面板登录态反代访问，不暴露到公网。</p>
+    {{end}}
+    <form method="post" action="{{.Base}}/terminal/install" class="inline" data-confirm="将从 GitHub 下载最新 ttyd release 并安装/更新，继续？">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button type="submit" class="primary">{{icon "download"}}{{if .Data.Installed}}更新到最新版{{else}}一键安装 ttyd{{end}}</button>
+    </form>
+  </div>
+  {{if .Data.Installed}}
+  <div class="card">
+    <h3>{{icon "power"}}服务控制</h3>
+    <form method="post" action="{{.Base}}/terminal/service" class="inline">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <button name="action" value="start" class="btn">{{icon "play"}}启动</button>
+      <button name="action" value="stop" class="btn">{{icon "square"}}停止</button>
+      <button name="action" value="restart" class="btn">{{icon "rotate-cw"}}重启</button>
+    </form>
+    <p><a class="btn" href="{{.Base}}/logs?service=ttyd">{{icon "scroll-text"}}查看日志</a></p>
+  </div>
+  {{end}}
+</div>
+
+{{if .Data.Active}}
+<iframe src="{{.Base}}/terminal/ui/" class="terminal-frame" title="终端"></iframe>
+<p class="muted">root shell（bash）。终端经面板会话鉴权反代，请勿把面板账号借予不信任的人。</p>
+{{else if .Data.Installed}}
+<p class="muted">ttyd 未运行，启动后此处会嵌入终端。</p>
+{{end}}
+{{end}}

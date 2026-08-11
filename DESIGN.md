@@ -226,6 +226,13 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 - 流程：下载到临时文件 → sha256 校验 → 原子替换（rename）→ BypassCore reload → 展示文件版本日期
 - 手动更新按钮 + 可选每周定时（面板内 goroutine ticker）
 
+### 8.5 Web 终端（ttyd）
+
+- 「终端」页通过 ttyd 提供 root shell（bash）。ttyd 只监听 `127.0.0.1:7681`（`terminal.port` 可改），不暴露公网
+- 面板将 `base_path/terminal/ui/*` 反代到 ttyd（路径原样转发，ttyd 以 `-b <base_path>/terminal/ui` 运行），HTTP 与 WebSocket 升级均由 `httputil.ReverseProxy` 处理；该路由与其他面板路由一样走会话认证，即「需要登录」由面板会话保证
+- 一键安装：GitHub API 查询 `tsl0922/ttyd` 最新 release，按架构下载静态二进制（`ttyd.{x86_64,aarch64,armhf,i686}`，支持镜像前缀），原子落盘 `/usr/local/bin/ttyd`，`--version` 自检（官方 release 无校验文件，自检兜底），写入 `ttyd.service` 并 enable + restart
+- 反代路径豁免面板自身的严格 CSP 与 `X-Frame-Options: DENY`（ttyd SPA 含内联引导脚本且需要被终端页 iframe 嵌入），其余页面安全头不变
+
 ## 9. 安装脚本（install.sh）
 
 流程（bash，root，set -euo pipefail）：
@@ -262,6 +269,10 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 | POST | /bypasscore/install | 安装/更新 BypassCore | 是 |
 | GET/POST | /bypasscore/config | 配置编辑（validate+reload 管线） | 是 |
 | POST | /bypasscore/service/{start,stop,restart} | 服务控制 | 是 |
+| GET | /terminal | ttyd 状态 + 嵌入终端 iframe | 是 |
+| POST | /terminal/install | 一键安装/更新 ttyd | 是 |
+| POST | /terminal/service | ttyd 服务控制 | 是 |
+| * | /terminal/ui/* | ttyd 反代（HTTP + WebSocket） | 是 |
 | GET/POST | /geo | Geo 文件状态 + 手动更新 | 是 |
 | GET/POST | /settings | 改密码、TOTP 设置/开关、寄宿站点迁移、面板信息 | 是 |
 

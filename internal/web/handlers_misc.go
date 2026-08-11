@@ -8,6 +8,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/sysd"
+	"github.com/kinmeic/NaivePanel/internal/sysinfo"
 )
 
 // handleDashboard shows a service overview.
@@ -15,12 +16,15 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	bcInstalled := s.Bypass.Installed()
 	totpOn, _ := s.Cfg.TOTPState()
 	geoCfg := s.Cfg.GeoSnapshot()
+	pubV4, pubV6 := sysinfo.PublicIPs()
 	data := map[string]any{
 		"Domain":        s.Cfg.Domain,
 		"Version":       s.Version,
 		"BasePath":      s.Cfg.BasePath,
 		"Listen":        s.Cfg.Listen,
 		"HostSite":      s.Cfg.GetHostSite(),
+		"PublicIPv4":    pubV4,
+		"PublicIPv6":    pubV6,
 		"SiteCount":     len(s.Cfg.SitesSnapshot()),
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
