@@ -8,23 +8,16 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
 
-// handleTerminal shows the ttyd status card and embeds the web terminal
-// when the service is running.
+// handleTerminal shows the ttyd install/start card or the embedded web
+// terminal when the service is running.
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	installed := s.Terminal.Installed()
-	data := map[string]any{
+	s.render(w, r, "terminal", "终端", map[string]any{
 		"Installed": installed,
 		"Version":   s.Terminal.Version(),
 		"Active":    installed && sysd.IsActive(s.Terminal.UnitName()),
 		"Port":      s.Cfg.Terminal.Port,
-	}
-	if installed {
-		logLines, logContent, logError := readServiceLog(r, s.Terminal.UnitName())
-		data["LogLines"] = logLines
-		data["LogContent"] = logContent
-		data["LogError"] = logError
-	}
-	s.render(w, r, "terminal", "终端", data)
+	})
 }
 
 // handleTerminalInstall downloads ttyd, installs the unit and starts it.

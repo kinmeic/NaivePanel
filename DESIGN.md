@@ -232,7 +232,7 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 
 ### 8.5 Web 终端（ttyd）
 
-- 「终端」页通过 ttyd 提供 root shell（bash）。ttyd 只监听 `127.0.0.1:7681`（`terminal.port` 可改），不暴露公网
+- 「终端」页通过 ttyd 提供系统终端。ttyd 运行系统 `login` 程序，进入后仍需输入系统账号密码（双道门：面板会话 + OS 登录）。ttyd 只监听 `127.0.0.1:7681`（`terminal.port` 可改），不暴露公网
 - 面板将 `base_path/terminal/ui/*` 反代到 ttyd（路径原样转发，ttyd 以 `-b <base_path>/terminal/ui` 运行），HTTP 与 WebSocket 升级均由 `httputil.ReverseProxy` 处理；该路由与其他面板路由一样走会话认证，即「需要登录」由面板会话保证
 - 一键安装：GitHub API 查询 `tsl0922/ttyd` 最新 release，按架构下载静态二进制（`ttyd.{x86_64,aarch64,armhf,i686}`，支持镜像前缀），原子落盘 `/usr/local/bin/ttyd`，`--version` 自检（官方 release 无校验文件，自检兜底），写入 `ttyd.service` 并 enable + restart
 - 反代路径豁免面板自身的严格 CSP 与 `X-Frame-Options: DENY`（ttyd SPA 含内联引导脚本且需要被终端页 iframe 嵌入），其余页面安全头不变

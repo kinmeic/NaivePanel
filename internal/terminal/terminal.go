@@ -1,6 +1,8 @@
 // Package terminal manages the ttyd web terminal: install, systemd unit and
 // version probing. ttyd listens on localhost only and is exposed through the
-// panel's authenticated reverse proxy under base_path/terminal/ui.
+// panel's authenticated reverse proxy under base_path/terminal/ui. It runs
+// the system `login` program, so after the panel session gate users still
+// authenticate with OS credentials before getting a shell.
 package terminal
 
 import (
@@ -193,7 +195,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s -i 127.0.0.1 -p %d -W -b %s bash
+ExecStart=%s -i 127.0.0.1 -p %d -W -b %s login
 Restart=on-failure
 RestartSec=3
 

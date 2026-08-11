@@ -31,7 +31,7 @@ func TestUnitContent(t *testing.T) {
 	m := New(cfg)
 	unit := m.unitContent("/manage-x/")
 	for _, want := range []string{
-		"ExecStart=/usr/local/bin/ttyd -i 127.0.0.1 -p 7681 -W -b /manage-x/terminal/ui bash",
+		"ExecStart=/usr/local/bin/ttyd -i 127.0.0.1 -p 7681 -W -b /manage-x/terminal/ui login",
 		"WantedBy=multi-user.target",
 	} {
 		if !strings.Contains(unit, want) {
