@@ -8,8 +8,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/kinmeic/NaivePanel/internal/sites"
@@ -54,9 +59,8 @@ type Terminal struct {
 
 // Geo holds geodata update settings.
 type Geo struct {
-	Dir              string `yaml:"dir"`
-	Mirror           string `yaml:"mirror"` // optional URL prefix for GitHub releases
-	AutoUpdateWeekly bool   `yaml:"auto_update_weekly"`
+	Dir    string `yaml:"dir"`
+	Mirror string `yaml:"mirror"` // optional URL prefix for GitHub releases
 }
 
 // CaddyPaths locates the managed Caddy installation.
@@ -101,6 +105,21 @@ type Config struct {
 	// Listen, Domain, BasePath and AdminUser are immutable after Load.
 	mu   sync.RWMutex
 	path string
+}
+
+// SourcePath returns the absolute path this configuration was loaded from.
+// Callers use its directory for panel-owned auxiliary state.
+func (c *Config) SourcePath() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	path := c.path
+	if path == "" {
+		path = DefaultConfigPath
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		return absolute
+	}
+	return filepath.Clean(path)
 }
 
 // SetDefaults fills zero-valued fields with the standard layout.
@@ -151,17 +170,83 @@ func (c *Config) SetDefaults() {
 
 // Validate checks the minimum viable configuration.
 func (c *Config) Validate() error {
-	if c.Domain == "" {
-		return errors.New("domain 不能为空")
+	if err := (&sites.Site{Domain: c.Domain, RawMode: true, Raw: "validation"}).Validate(); err != nil {
+		return fmt.Errorf("domain: %w", err)
 	}
-	if c.BasePath == "" || c.BasePath[0] != '/' {
-		return errors.New("base_path 必须以 / 开头")
+	if c.BasePath == "" || c.BasePath[0] != '/' || c.BasePath == "/" ||
+		strings.HasSuffix(c.BasePath, "/") || len(c.BasePath) > 128 ||
+		strings.ContainsAny(c.BasePath, " \t\r\n{}?#") {
+		return errors.New("base_path 必须是以 / 开头、不以 / 结尾且不含空白或特殊字符的路径")
 	}
 	if c.AdminUser == "" || c.AdminPassHash == "" {
 		return errors.New("管理员账号或密码哈希为空")
 	}
+	if strings.ContainsAny(c.AdminUser, "\r\n\x00") {
+		return errors.New("管理员账号包含控制字符")
+	}
+	host, portText, err := net.SplitHostPort(c.Listen)
+	if err != nil {
+		return fmt.Errorf("listen 必须是 host:port: %w", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("listen 端口必须在 1–65535 之间")
+	}
+	if host != "localhost" {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return errors.New("listen 必须绑定到 loopback 地址（127.0.0.1、::1 或 localhost）")
+		}
+	}
+	if c.SessionTTLHours < 1 || c.SessionTTLHours > 24*30 {
+		return errors.New("session_ttl_hours 必须在 1–720 之间")
+	}
+	if c.BypassCore.SocksPort < 1 || c.BypassCore.SocksPort > 65535 {
+		return errors.New("bypasscore.socks_port 必须在 1–65535 之间")
+	}
+	if c.ProxyToken != "" && len(c.ProxyToken) < 32 {
+		return errors.New("proxy_token 长度至少为 32 个字符")
+	}
+	for name, path := range map[string]string{
+		"caddy.bin":               c.Caddy.Bin,
+		"caddy.main_file":         c.Caddy.MainFile,
+		"caddy.sites_dir":         c.Caddy.SitesDir,
+		"bypasscore.bin_path":     c.BypassCore.BinPath,
+		"bypasscore.config_path":  c.BypassCore.ConfigPath,
+		"bypasscore.control_sock": c.BypassCore.ControlSock,
+		"bypasscore.work_dir":     c.BypassCore.WorkDir,
+		"geo.dir":                 c.Geo.Dir,
+		"backup_dir":              c.BackupDir,
+	} {
+		if !filepath.IsAbs(path) || strings.ContainsAny(path, "\r\n\x00") {
+			return fmt.Errorf("%s 必须是无控制字符的绝对路径", name)
+		}
+	}
+	if err := ValidateMirror(c.Geo.Mirror); err != nil {
+		return err
+	}
 	if c.HostSite == "" {
 		c.HostSite = c.Domain
+	} else if err := (&sites.Site{Domain: c.HostSite, RawMode: true, Raw: "validation"}).Validate(); err != nil {
+		return fmt.Errorf("host_site: %w", err)
+	}
+	return nil
+}
+
+// ValidateMirror accepts only HTTPS URL prefixes without credentials, query
+// parameters or fragments. The panel downloads update artifacts as root, so
+// accepting arbitrary schemes or embedded credentials would create an
+// avoidable SSRF/secret-leak footgun.
+func ValidateMirror(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return errors.New("GitHub 镜像必须是有效的 https:// URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("GitHub 镜像 URL 不能包含账号、查询参数或片段")
 	}
 	return nil
 }
@@ -178,15 +263,84 @@ func Load(path string) (*Config, error) {
 	}
 	c.path = path
 	c.SetDefaults()
+	migrated, err := c.migrateLegacyValues()
+	if err != nil {
+		return nil, err
+	}
 	if err := c.Validate(); err != nil {
 		return nil, err
+	}
+	if c.migrateSiteRouteModes() {
+		migrated = true
 	}
 	if c.ProxyToken == "" {
 		// Older configs lack the HTTPS gate token; generate and persist.
 		c.ProxyToken = RandomToken()
-		_ = c.Save()
+		migrated = true
+	}
+	if migrated {
+		if err := c.Save(); err != nil {
+			return nil, fmt.Errorf("保存迁移后的配置: %w", err)
+		}
 	}
 	return &c, nil
+}
+
+// migrateSiteRouteModes upgrades configs written before use_route existed.
+// It reads the live snippet only when the YAML field was absent; an explicit
+// false selection in a current config is never overridden.
+func (c *Config) migrateSiteRouteModes() bool {
+	legacy := false
+	mainSites := map[string]string{}
+	mainLoaded := false
+	for i := range c.Sites {
+		if c.Sites[i].RouteExplicit {
+			continue
+		}
+		legacy = true
+		content, err := os.ReadFile(filepath.Join(c.Caddy.SitesDir, c.Sites[i].Domain+".caddy"))
+		if err != nil && !mainLoaded {
+			mainLoaded = true
+			if main, readErr := os.ReadFile(c.Caddy.MainFile); readErr == nil {
+				_, blocks := sites.SplitMain(string(main))
+				for _, block := range blocks {
+					mainSites[block.Domain] = block.Content
+				}
+			}
+		}
+		if err != nil {
+			content = []byte(mainSites[c.Sites[i].Domain])
+		}
+		if len(content) > 0 {
+			if parsed, parseErr := sites.Parse(string(content), c.BasePath, c.BypassCore.SocksPort); parseErr == nil {
+				c.Sites[i].UseRoute = parsed.UseRoute
+			}
+		}
+		c.Sites[i].RouteExplicit = true
+	}
+	return legacy
+}
+
+// migrateLegacyValues upgrades only values emitted or commonly copied from
+// older NaivePanel documentation. Shell expressions are never evaluated:
+// LookPath resolves the known executable name and the resulting absolute path
+// is persisted before the regular security validation runs.
+func (c *Config) migrateLegacyValues() (bool, error) {
+	switch strings.TrimSpace(c.Caddy.Bin) {
+	case "caddy", "$(command -v caddy)":
+		path, err := exec.LookPath("caddy")
+		if err != nil {
+			return false, fmt.Errorf("迁移 caddy.bin 失败：未找到 caddy 可执行文件，请将其改为绝对路径（例如 /usr/bin/caddy）")
+		}
+		path, err = filepath.Abs(path)
+		if err != nil || !filepath.IsAbs(path) {
+			return false, fmt.Errorf("迁移 caddy.bin 失败：无法确定 caddy 的绝对路径")
+		}
+		c.Caddy.Bin = path
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 // Save atomically persists the config (0600).
@@ -201,11 +355,29 @@ func (c *Config) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := c.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	dir := filepath.Dir(c.path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(c.path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, c.path)
+	name := tmp.Name()
+	defer os.Remove(name)
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, c.path)
 }
 
 // Path returns the loaded config file path.

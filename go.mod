@@ -2,6 +2,8 @@ module github.com/kinmeic/NaivePanel
 
 go 1.22
 
+toolchain go1.26.5
+
 require (
 	github.com/pquerna/otp v1.4.0
 	golang.org/x/crypto v0.31.0

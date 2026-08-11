@@ -2,69 +2,119 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/geo"
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 	"github.com/kinmeic/NaivePanel/internal/sysinfo"
+	"github.com/kinmeic/NaivePanel/internal/systemstats"
 )
 
-// handleDashboard shows a service overview.
+// handleDashboard shows the host and service overview.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	bcInstalled := s.Bypass.Installed()
-	totpOn, _ := s.Cfg.TOTPState()
-	geoCfg := s.Cfg.GeoSnapshot()
+	host := systemstats.ReadHostInfo()
 	pubV4, pubV6 := sysinfo.PublicIPs()
 	data := map[string]any{
-		"Domain":        s.Cfg.Domain,
-		"Version":       s.Version,
-		"BasePath":      s.Cfg.BasePath,
-		"Listen":        s.Cfg.Listen,
-		"HostSite":      s.Cfg.GetHostSite(),
+		"Host":          host,
 		"PublicIPv4":    pubV4,
 		"PublicIPv6":    pubV6,
-		"SiteCount":     len(s.Cfg.SitesSnapshot()),
+		"Uptime":        formatUptime(host.Uptime),
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
 		"BypassActive":  bcInstalled && sysd.IsActive("bypasscore"),
-		"BypassVersion": s.Bypass.Version(),
 		"PanelActive":   sysd.IsActive("naivepanel"),
-		"Geo":           geo.Stat(geoCfg.Dir),
-		"TOTPEnabled":   totpOn,
 	}
-	s.render(w, r, "dashboard", "仪表盘", data)
+	s.render(w, r, "dashboard", "概览", data)
+}
+
+func formatUptime(value time.Duration) string {
+	if value <= 0 {
+		return "未知"
+	}
+	totalMinutes := int64(value / time.Minute)
+	days := totalMinutes / (24 * 60)
+	hours := (totalMinutes / 60) % 24
+	minutes := totalMinutes % 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%d 天 %d 小时 %d 分钟", days, hours, minutes)
+	case hours > 0:
+		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
+	case totalMinutes > 0:
+		return fmt.Sprintf("%d 分钟", minutes)
+	default:
+		return "不到 1 分钟"
+	}
 }
 
 // handleCaddyReload reloads Caddy with the live on-disk config.
 func (s *Server) handleCaddyReload(w http.ResponseWriter, r *http.Request) {
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	if err := s.Caddy.ReloadOnly(); err != nil {
 		s.setFlash(w, "Caddy 重载失败: "+err.Error())
 	} else {
 		s.setFlash(w, "Caddy 已重载")
 	}
-	s.redirect(w, r, "/caddy/preview")
+	s.redirect(w, r, "/caddy")
 }
 
 // handleBypass shows BypassCore status and service controls.
 func (s *Server) handleBypass(w http.ResponseWriter, r *http.Request) {
+	installed := s.Bypass.Installed()
+	active := installed && sysd.IsActive("bypasscore")
 	data := map[string]any{
-		"Installed":  s.Bypass.Installed(),
-		"Version":    s.Bypass.Version(),
-		"Active":     sysd.IsActive("bypasscore"),
-		"ConfigPath": s.Cfg.BypassCore.ConfigPath,
-		"SocksPort":  s.Cfg.BypassCore.SocksPort,
+		"Installed": installed,
+		"Active":    active,
+		"Enabled":   installed && sysd.IsEnabled("bypasscore"),
+		"SocksPort": s.Cfg.BypassCore.SocksPort,
 	}
-	if status, err := s.Bypass.Status(); err == nil {
-		var v any
-		if json.Unmarshal([]byte(status), &v) == nil {
-			data["Status"] = v
+	logLines, logContent, logError := readServiceLog(r, "bypasscore")
+	data["LogLines"] = logLines
+	data["LogContent"] = logContent
+	data["LogError"] = logError
+	content, configErr := s.Bypass.ReadConfig()
+	control, inspectErr := bypasscore.InspectControlConfig(content)
+	switch {
+	case !installed:
+		data["StatusInfo"] = "安装 BypassCore 后可查看运行状态。"
+	case !active:
+		data["StatusInfo"] = "服务当前未运行，启动后可查看实时状态。"
+	case configErr != nil:
+		data["StatusError"] = "无法读取配置以检查控制面: " + configErr.Error()
+	case inspectErr != nil:
+		data["StatusError"] = inspectErr.Error()
+	case !control.Enabled:
+		data["ControlNeedsEnable"] = true
+		data["StatusWarning"] = "服务正在运行，但配置中尚未启用本地控制面。启用后才能查看状态并使用热重载。"
+	case control.Socket != s.Cfg.BypassCore.ControlSock:
+		data["ControlNeedsEnable"] = true
+		data["StatusWarning"] = fmt.Sprintf("控制面 socket 配置为 %q，与面板期望的 %q 不一致。", control.Socket, s.Cfg.BypassCore.ControlSock)
+	default:
+		status, err := s.Bypass.Status()
+		if err != nil {
+			data["StatusWarning"] = "控制面已在配置中启用，但 socket 尚不可达。请先重启服务；若仍不可用，请查看 BypassCore 日志。"
+			data["StatusDetail"] = err.Error()
+			break
+		}
+		view, parseErr := newBypassStatusView(status, time.Now())
+		if parseErr == nil {
+			data["StatusView"] = view
+			var raw any
+			if json.Unmarshal([]byte(status), &raw) == nil {
+				data["StatusRaw"] = raw
+			}
 		} else {
 			data["StatusRaw"] = string(status)
+			data["StatusWarning"] = "控制面状态已获取，但当前版本返回了面板尚未识别的格式。"
+			data["StatusDetail"] = parseErr.Error()
 		}
-	} else {
-		data["StatusError"] = err.Error()
 	}
 	s.render(w, r, "bypass", "BypassCore", data)
 }
@@ -74,29 +124,58 @@ func (s *Server) handleBypassInstall(w http.ResponseWriter, r *http.Request) {
 	tag, err := s.Bypass.Install(s.Cfg.GeoSnapshot().Mirror)
 	if err != nil {
 		s.setFlash(w, "安装/更新失败: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	// Make sure a minimal config exists so the service can start.
 	if cur, err := s.Bypass.ReadConfig(); err != nil || len(cur) == 0 {
 		minimal, _, _ := bypasscore.EnsureSocksInbound(nil, s.Cfg.BypassCore.SocksPort)
+		minimal, _, _ = bypasscore.EnsureControlPlane(minimal, s.Cfg.BypassCore.ControlSock)
 		if err := s.Bypass.ApplyConfig(minimal); err != nil {
 			s.setFlash(w, "已安装 "+tag+"，但写入初始配置失败: "+err.Error())
-			s.redirect(w, r, "/bypasscore")
+			s.redirect(w, r, "/settings")
 			return
 		}
 	}
 	if err := sysd.Action("enable", "bypasscore"); err != nil {
 		s.setFlash(w, "已安装 "+tag+"，但设置开机启动失败: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	if err := sysd.Action("restart", "bypasscore"); err != nil {
 		s.setFlash(w, "已安装 "+tag+"，但启动失败（请检查配置）: "+err.Error())
-		s.redirect(w, r, "/bypasscore")
+		s.redirect(w, r, "/settings")
 		return
 	}
 	s.setFlash(w, "BypassCore "+tag+" 安装完成并已启动")
+	s.redirect(w, r, "/settings")
+}
+
+// handleBypassControlEnable upgrades an existing config to expose the local
+// Unix-socket control API and applies it transactionally.
+func (s *Server) handleBypassControlEnable(w http.ResponseWriter, r *http.Request) {
+	cur, err := s.Bypass.ReadConfig()
+	if err != nil {
+		s.setFlash(w, "读取 BypassCore 配置失败: "+err.Error())
+		s.redirect(w, r, "/bypasscore")
+		return
+	}
+	next, changed, err := bypasscore.EnsureControlPlane(cur, s.Cfg.BypassCore.ControlSock)
+	if err != nil {
+		s.setFlash(w, "启用控制面失败: "+err.Error())
+		s.redirect(w, r, "/bypasscore")
+		return
+	}
+	if !changed {
+		s.setFlash(w, "控制面配置已启用；如 socket 仍不存在，请重启 BypassCore 并查看日志")
+		s.redirect(w, r, "/bypasscore")
+		return
+	}
+	if err := s.Bypass.ApplyConfig(next); err != nil {
+		s.setFlash(w, "启用控制面失败: "+err.Error())
+	} else {
+		s.setFlash(w, "控制面已启用并生效")
+	}
 	s.redirect(w, r, "/bypasscore")
 }
 
@@ -114,14 +193,24 @@ func (s *Server) handleBypassConfigGET(w http.ResponseWriter, r *http.Request) {
 // handleBypassConfigPOST applies a new config through the validate pipeline.
 func (s *Server) handleBypassConfigPOST(w http.ResponseWriter, r *http.Request) {
 	content := r.FormValue("config")
-	if err := s.Bypass.ApplyConfig([]byte(content)); err != nil {
+	result, err := s.Bypass.ApplyConfigWithResult([]byte(content))
+	if err != nil {
 		s.render(w, r, "bypass_config", "BypassCore 配置", map[string]any{
 			"Config": content,
 			"Error":  err.Error(),
 		})
 		return
 	}
-	s.setFlash(w, "配置已校验并生效（热重载或按需重启）")
+	switch result.Mode {
+	case bypasscore.ApplyHotReloaded:
+		s.setFlash(w, "配置已保存并通过热重载生效，无需重启 BypassCore")
+	case bypasscore.ApplyRestarted:
+		s.setFlash(w, "配置已保存；此项变更需要重启，面板已自动重启 BypassCore 并确认恢复")
+	case bypasscore.ApplySavedOnly:
+		s.setFlash(w, "配置已校验并保存；BypassCore 当前未运行，将在下次启动时生效")
+	default:
+		s.setFlash(w, "配置已校验并生效")
+	}
 	s.redirect(w, r, "/bypasscore")
 }
 
@@ -129,11 +218,32 @@ func (s *Server) handleBypassConfigPOST(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 	action := r.FormValue("action")
 	switch action {
-	case "start", "stop", "restart":
+	case "start", "stop", "restart", "enable", "disable":
+		if action == "restart" {
+			operation, _, err := s.beginServiceRestart("bypasscore", "BypassCore", 0)
+			if err != nil {
+				s.setFlash(w, "无法提交 BypassCore 重启请求："+err.Error())
+				s.redirect(w, r, "/bypasscore")
+				return
+			}
+			s.respondServiceOperation(w, r, operation, "/bypasscore")
+			return
+		}
 		if err := sysd.Action(action, "bypasscore"); err != nil {
 			s.setFlash(w, err.Error())
 		} else {
-			s.setFlash(w, "bypasscore "+action+" 完成")
+			switch action {
+			case "enable":
+				s.setFlash(w, "BypassCore 已开启开机自启")
+			case "disable":
+				s.setFlash(w, "BypassCore 已关闭开机自启（当前服务不会停止）")
+			default:
+				if action == "start" {
+					s.setFlash(w, "BypassCore 已启动")
+				} else {
+					s.setFlash(w, "BypassCore 已停止")
+				}
+			}
 		}
 	default:
 		s.setFlash(w, "未知操作")
@@ -144,11 +254,22 @@ func (s *Server) handleBypassService(w http.ResponseWriter, r *http.Request) {
 // handleGeo shows geodata file status.
 func (s *Server) handleGeo(w http.ResponseWriter, r *http.Request) {
 	geoCfg := s.Cfg.GeoSnapshot()
+	s.renderGeo(w, r, geoCfg.Dir, nil)
+}
+
+func (s *Server) renderGeo(w http.ResponseWriter, r *http.Request, dir string, comparison []geo.Comparison) {
 	s.render(w, r, "geo", "Geo 数据文件", map[string]any{
-		"Files": geo.Stat(geoCfg.Dir),
-		"Dir":   geoCfg.Dir,
-		"Geo":   geoCfg,
+		"Files":      geo.Stat(dir),
+		"Dir":        dir,
+		"Comparison": comparison,
 	})
+}
+
+// handleGeoCheck compares local metadata with the current release assets
+// without downloading or modifying the managed files.
+func (s *Server) handleGeoCheck(w http.ResponseWriter, r *http.Request) {
+	geoCfg := s.Cfg.GeoSnapshot()
+	s.renderGeo(w, r, geoCfg.Dir, geo.Check(geoCfg.Dir, geoCfg.Mirror))
 }
 
 // handleGeoUpdate downloads and verifies the latest geodata files.
@@ -169,19 +290,23 @@ func (s *Server) handleGeoUpdate(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/geo")
 }
 
-// handleGeoSettings saves mirror / auto-update preferences.
-func (s *Server) handleGeoSettings(w http.ResponseWriter, r *http.Request) {
-	mirror := r.FormValue("mirror")
-	auto := r.FormValue("auto") == "on"
+// handleUpdateSettings saves the shared GitHub mirror consumed by NaivePanel,
+// BypassCore and Geo updates.
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	mirror := strings.TrimSpace(r.FormValue("mirror"))
+	if err := config.ValidateMirror(mirror); err != nil {
+		s.setFlash(w, "保存失败: "+err.Error())
+		s.redirect(w, r, "/settings")
+		return
+	}
 	err := s.Cfg.Mutate(func(c *config.Config) error {
 		c.Geo.Mirror = mirror
-		c.Geo.AutoUpdateWeekly = auto
 		return nil
 	})
 	if err != nil {
 		s.setFlash(w, "保存失败: "+err.Error())
 	} else {
-		s.setFlash(w, "设置已保存（自动更新在面板重启后生效）")
+		s.setFlash(w, "更新设置已保存")
 	}
-	s.redirect(w, r, "/geo")
+	s.redirect(w, r, "/settings")
 }

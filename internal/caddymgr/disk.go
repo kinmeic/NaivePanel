@@ -64,21 +64,12 @@ func (m *Manager) ReadDiskSite(domain string) (DiskSite, bool) {
 	return DiskSite{}, false
 }
 
-// LivePreview returns the real on-disk configuration: the main Caddyfile
-// plus every site snippet, with path headers.
+// LivePreview returns the main Caddyfile exactly as stored on disk. Imported
+// site snippets are deliberately omitted from this view.
 func (m *Manager) LivePreview() string {
-	var b strings.Builder
-	if data, err := os.ReadFile(m.cfg.Caddy.MainFile); err == nil {
-		b.WriteString("# ===== " + m.cfg.Caddy.MainFile + " =====\n\n")
-		b.WriteString(string(data))
-		b.WriteString("\n")
-	} else {
-		b.WriteString("# ===== " + m.cfg.Caddy.MainFile + " =====\n\n# (读取失败: " + err.Error() + ")\n\n")
+	data, err := os.ReadFile(m.cfg.Caddy.MainFile)
+	if err != nil {
+		return "读取失败: " + err.Error()
 	}
-	for _, ds := range m.ListDiskSites() {
-		b.WriteString("# ===== " + filepath.Join(m.cfg.Caddy.SitesDir, ds.FileName) + " =====\n\n")
-		b.WriteString(ds.Content)
-		b.WriteString("\n")
-	}
-	return b.String()
+	return string(data)
 }

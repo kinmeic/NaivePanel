@@ -12,12 +12,19 @@ import (
 // when the service is running.
 func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	installed := s.Terminal.Installed()
-	s.render(w, r, "terminal", "终端", map[string]any{
+	data := map[string]any{
 		"Installed": installed,
 		"Version":   s.Terminal.Version(),
 		"Active":    installed && sysd.IsActive(s.Terminal.UnitName()),
 		"Port":      s.Cfg.Terminal.Port,
-	})
+	}
+	if installed {
+		logLines, logContent, logError := readServiceLog(r, s.Terminal.UnitName())
+		data["LogLines"] = logLines
+		data["LogContent"] = logContent
+		data["LogError"] = logError
+	}
+	s.render(w, r, "terminal", "终端", data)
 }
 
 // handleTerminalInstall downloads ttyd, installs the unit and starts it.

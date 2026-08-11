@@ -25,10 +25,29 @@
 
   <fieldset id="raw-section" {{if not $s.RawMode}}class="hidden"{{end}}>
     <legend>原始 Caddyfile 片段</legend>
-    <textarea name="raw" rows="18" class="mono">{{$s.Raw}}</textarea>
+    <p class="muted">首次切换时会用当前结构化表单生成完整片段；进入高级模式后请直接维护这里的内容。</p>
+    <textarea name="raw" rows="18" class="mono">{{if $s.RawMode}}{{$s.Raw}}{{else}}{{$d.Preview}}{{end}}</textarea>
   </fieldset>
 
   <div id="structured-section" {{if $s.RawMode}}class="hidden"{{end}}>
+  <fieldset>
+    <legend>站点级选项</legend>
+    <p class="muted">始终直接位于站点块中，适用于 tls / log / bind / handle_errors；嵌套缩进会原样保留。</p>
+    <textarea name="site_options" rows="6" class="mono" placeholder="tls {&#10;&#9;dns cloudflare TOKEN&#10;}">{{$s.SiteOptions}}</textarea>
+  </fieldset>
+
+  <fieldset class="route-setting">
+    <legend>HTTP 指令排序</legend>
+    <label class="check">
+      <input type="checkbox" name="use_route" id="use-route-toggle" {{if $s.UseRoute}}checked{{end}}>
+      使用 <code>route</code> 固定下方 HTTP 处理器的执行顺序
+    </label>
+    <p class="muted">通常应保持关闭，让 Caddy 按内置指令顺序自动排序；面板会在全局配置中维护 forward_proxy 的推荐顺序。仅在原配置已有 route，或确实需要逐行控制处理链时启用。</p>
+  </fieldset>
+
+  <section id="caddy-handlers-block" class="{{if $s.UseRoute}}caddy-route-block{{else}}caddy-directives-block{{end}}">
+  <div class="caddy-route-brace {{if not $s.UseRoute}}hidden{{end}}"><code>route {</code><span>以下 HTTP 处理器严格按显示顺序执行</span></div>
+  <div class="caddy-route-body">
   <fieldset>
     <legend>forward_proxy（NaiveProxy）</legend>
     <label class="check">
@@ -42,7 +61,7 @@
       <input type="checkbox" name="fp_bypass" {{if $s.ForwardProxy.UseBypassCore}}checked{{end}}>
       使用本机 BypassCore 分流（upstream 自动设为 socks5://127.0.0.1:面板配置端口）
     </label>
-    <label>自定义 upstream（不使用 BypassCore 时生效，留空为直连）
+    <label id="fp-upstream-field">自定义 upstream（留空为直连）
       <input name="fp_upstream" value="{{$s.ForwardProxy.Upstream}}" placeholder="https://user:pass@upstream.com:443 或 socks5://...">
     </label>
   </fieldset>
@@ -57,16 +76,16 @@
         <option value="reverse_proxy" {{if eq $s.Web.Type "reverse_proxy"}}selected{{end}}>反向代理</option>
       </select>
     </label>
-    <label>站点目录（静态/PHP）
+    <label id="web-root-field">站点目录（静态/PHP）
       <input name="web_root" value="{{$s.Web.Root}}" placeholder="/var/www/example.com">
     </label>
-    <label>php-fpm socket（PHP 站）
+    <label id="web-php-field">php-fpm socket（PHP 站）
       <input name="web_php_socket" list="php-sockets" value="{{$s.Web.PHPSocket}}" placeholder="unix//run/php/php8.3-fpm.sock">
       <datalist id="php-sockets">
         {{range $d.PHPSockets}}<option value="{{.}}">{{end}}
       </datalist>
     </label>
-    <label>反代上游（反向代理站）
+    <label id="web-proxy-field">反代上游（反向代理站）
       <input name="web_proxy_to" value="{{$s.Web.ProxyTo}}" placeholder="127.0.0.1:3000">
     </label>
   </fieldset>
@@ -88,16 +107,29 @@
     </div>
     <button type="button" id="eb-add" class="btn">{{icon "plus"}}添加自定义块</button>
   </fieldset>
+
+  <fieldset>
+    <legend>附加 HTTP 指令</legend>
+    <p class="muted">从现有 Caddyfile 识别出的其他 HTTP 指令会保留在这里；启用 route 时它们位于 route 内，否则直接位于站点块中。</p>
+    <label>附加 HTTP 指令
+      <textarea name="extra_directives" rows="7" class="mono" placeholder="header X-Content-Type-Options nosniff">{{$s.ExtraDirectives}}</textarea>
+    </label>
+  </fieldset>
+  </div>
+  <div class="caddy-route-brace caddy-route-close {{if not $s.UseRoute}}hidden{{end}}"><code>}</code></div>
+  </section>
   </div>
 
   <div class="actions">
     <button type="submit" class="primary">{{icon "save"}}保存并生效</button>
     <button type="button" id="btn-preview" class="btn">{{icon "refresh-cw"}}刷新预览</button>
+    <a class="btn" href="{{$base}}/caddy/sites">{{icon "arrow-left"}}取消</a>
   </div>
 </form>
 
 <fieldset>
   <legend>配置预览（该站点生成的 Caddyfile 片段）</legend>
+  <button type="button" class="btn copy-btn" data-copy-target="preview">复制配置</button>
   <pre id="preview" class="preview">{{$d.Preview}}</pre>
 </fieldset>
 {{end}}

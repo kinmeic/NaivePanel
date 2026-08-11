@@ -72,6 +72,25 @@ func TestRenderCustomUpstream(t *testing.T) {
 	}
 }
 
+func TestRenderRouteIsOptIn(t *testing.T) {
+	site := &Site{Domain: "a.com", Web: Web{Type: WebReverseProxy, ProxyTo: "127.0.0.1:3000"}}
+	out, err := Render(site, panel, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\troute {") {
+		t.Fatalf("default render should not use route:\n%s", out)
+	}
+	site.UseRoute = true
+	out, err = Render(site, panel, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "\troute {") {
+		t.Fatalf("explicit route was not rendered:\n%s", out)
+	}
+}
+
 func TestRenderValidation(t *testing.T) {
 	s := &Site{Domain: "a.com", ForwardProxy: ForwardProxy{Enabled: true}}
 	if _, err := Render(s, panel, false, 1080); err == nil {

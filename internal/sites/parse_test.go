@@ -109,10 +109,159 @@ func TestParseSkipsPanelBlock(t *testing.T) {
 	}
 }
 
-func TestParseRejectsForeignSnippet(t *testing.T) {
-	foreign := "example.com {\n\trespond ok\n}\n"
-	if _, err := Parse(foreign, panel.BasePath, 1080); err == nil {
-		t.Error("非面板渲染格式应报错（调用方回退高级模式导入）")
+func TestParseKeepsOrdinaryCaddyfileStructured(t *testing.T) {
+	foreign := `example.com {
+	tls admin@example.com
+	header X-Content-Type-Options nosniff
+	respond "ok"
+}`
+	got, err := Parse(foreign, panel.BasePath, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RawMode {
+		t.Fatal("ordinary Caddyfile should remain structured")
+	}
+	if !strings.Contains(got.SiteOptions, "tls admin@example.com") {
+		t.Fatalf("site option lost: %q", got.SiteOptions)
+	}
+	if !strings.Contains(got.ExtraDirectives, "header X-Content-Type-Options") ||
+		!strings.Contains(got.ExtraDirectives, `respond "ok"`) {
+		t.Fatalf("HTTP directives lost: %q", got.ExtraDirectives)
+	}
+	out, err := Render(got, panel, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tls admin@example.com", "header X-Content-Type-Options", `respond "ok"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("rendered config missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestParseDirectKnownDirectives(t *testing.T) {
+	snippet := `example.com {
+	forward_proxy {
+		basic_auth user pass
+		hide_ip
+		hide_via
+		probe_resistance
+	}
+	root * /srv/www
+	encode zstd gzip
+	file_server
+}`
+	got, err := Parse(snippet, panel.BasePath, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ForwardProxy.Enabled || got.Web.Type != WebStatic || got.Web.Root != "/srv/www" {
+		t.Fatalf("unexpected model: %+v", got)
+	}
+}
+
+func TestParseKeepsComplexDirectiveBlock(t *testing.T) {
+	snippet := `example.com {
+	reverse_proxy app:8080 {
+		header_up X-Test value
+		transport http {
+			versions h2c
+		}
+	}
+}`
+	got, err := Parse(snippet, panel.BasePath, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Web.Type != WebNone || !strings.Contains(got.ExtraDirectives, "header_up X-Test value") ||
+		!strings.Contains(got.ExtraDirectives, "transport http") {
+		t.Fatalf("complex reverse_proxy not preserved: %+v", got)
+	}
+}
+
+func TestParseSiteOptionBeforeRoute(t *testing.T) {
+	snippet := `:443, example.com {
+	tls {
+		dns cloudflare token
+		resolvers 1.1.1.1
+	}
+	route {
+		forward_proxy {
+			basic_auth user pass
+			hide_ip
+			hide_via
+			probe_resistance
+			upstream https://user:pass@exit.example.com:443
+		}
+		root * /srv/example
+		encode gzip zstd
+		php_fastcgi unix//run/php/php8.3-fpm.sock
+		file_server
+	}
+}`
+	got, err := Parse(snippet, "/manage-test", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.SiteOptions, "dns cloudflare token") {
+		t.Fatalf("tls option lost: %q", got.SiteOptions)
+	}
+	if want := "tls {\n\tdns cloudflare token\n\tresolvers 1.1.1.1\n}"; got.SiteOptions != want {
+		t.Fatalf("tls option indentation:\n got: %q\nwant: %q", got.SiteOptions, want)
+	}
+	if !got.ForwardProxy.Enabled || got.Web.Type != WebPHP || got.Web.Root != "/srv/example" {
+		t.Fatalf("route was not parsed structurally: %+v", got)
+	}
+	if !got.UseRoute {
+		t.Fatal("existing route wrapper was not preserved")
+	}
+	rendered, err := Render(got, PanelInfo{}, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "\ttls {\n\t\tdns cloudflare token\n\t\tresolvers 1.1.1.1\n\t}") {
+		t.Fatalf("tls option rendered indentation lost:\n%s", rendered)
+	}
+}
+
+func TestParseAndRenderPreserveNoRoute(t *testing.T) {
+	snippet := `example.com {
+	header X-Content-Type-Options nosniff
+	reverse_proxy 127.0.0.1:3000
+}`
+	got, err := Parse(snippet, "/manage-test", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UseRoute {
+		t.Fatal("ordinary site must not acquire route")
+	}
+	rendered, err := Render(got, PanelInfo{}, false, 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, "\troute {") {
+		t.Fatalf("route was unexpectedly introduced:\n%s", rendered)
+	}
+}
+
+func TestParsePreservesSpaceIndentedDirectiveBlock(t *testing.T) {
+	snippet := `example.com {
+  log {
+    output file /var/log/caddy/access.log {
+      roll_size 10MiB
+    }
+  }
+  respond ok
+}`
+	got, err := Parse(snippet, "/manage-test", 1080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "log {\n\toutput file /var/log/caddy/access.log {\n\t  roll_size 10MiB\n\t}\n}"
+	if got.SiteOptions != want {
+		t.Fatalf("space indentation:\n got: %q\nwant: %q", got.SiteOptions, want)
 	}
 }
 
@@ -236,5 +385,15 @@ func TestStripCommentQuoted(t *testing.T) {
 	}
 	if got := stripComment("# full line"); got != "" {
 		t.Fatalf("full-line comment not stripped: %q", got)
+	}
+}
+
+func TestContainsDirective(t *testing.T) {
+	snippet := "example.com {\n\t# forward_proxy {\n\trespond \"forward_proxy\"\n}\n"
+	if ContainsDirective(snippet, "forward_proxy") {
+		t.Fatal("comment or argument was mistaken for a directive")
+	}
+	if !ContainsDirective("example.com {\n\tforward_proxy {\n\t}\n}\n", "forward_proxy") {
+		t.Fatal("active directive was not detected")
 	}
 }

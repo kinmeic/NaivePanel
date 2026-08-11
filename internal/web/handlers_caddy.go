@@ -2,54 +2,141 @@ package web
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
 
-// caddyPageData feeds the merged Caddy page (service card + tabs).
+// caddyPageData feeds the Caddy service page.
 type caddyPageData struct {
-	View     string // "sites" | "config"
-	Active   bool   // caddy.service running
-	Content  string // config view: live on-disk configuration
-	HostSite string
+	Active                  bool
+	Enabled                 bool
+	ForwardProxyInstalled   bool
+	ForwardProxyDetectError string
+	LogLines                int
+	LogContent              string
+	LogError                string
 }
 
-func (s *Server) caddyData(view string) caddyPageData {
-	return caddyPageData{
-		View:     view,
-		Active:   sysd.IsActive("caddy"),
-		HostSite: s.Cfg.GetHostSite(),
+type caddyConfigPageData struct {
+	Config    string
+	Error     string
+	Notice    string
+	ActiveTab string
+}
+
+func (s *Server) caddyData(r *http.Request) caddyPageData {
+	lines, content, logError := readServiceLog(r, "caddy")
+	forwardProxyInstalled, forwardProxyErr := s.Caddy.ForwardProxyInstalled()
+	data := caddyPageData{
+		Active:     sysd.IsActive("caddy"),
+		Enabled:    sysd.IsEnabled("caddy"),
+		LogLines:   lines,
+		LogContent: content,
+		LogError:   logError,
 	}
+	data.ForwardProxyInstalled = forwardProxyInstalled
+	if forwardProxyErr != nil {
+		data.ForwardProxyDetectError = forwardProxyErr.Error()
+	}
+	return data
 }
 
-// handleCaddySites renders the Caddy page with the sites tab active. The
-// table itself is loaded asynchronously from /caddy/sites/list so the page
-// shows a loading state while the on-disk Caddyfile snippets are parsed.
-func (s *Server) handleCaddySites(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "caddy", "Caddy", s.caddyData("sites"))
+// handleCaddy renders service controls. Configuration editing lives on a
+// separate page so the service page stays focused on runtime operations.
+func (s *Server) handleCaddy(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "caddy", "Caddy", s.caddyData(r))
 }
 
-// handleCaddyConfig renders the Caddy page with the raw-config tab active:
-// the real on-disk Caddyfile plus every site snippet, i.e. exactly what
-// Caddy loads.
-func (s *Server) handleCaddyConfig(w http.ResponseWriter, r *http.Request) {
-	d := s.caddyData("config")
-	d.Content = s.Caddy.LivePreview()
-	s.render(w, r, "caddy", "Caddy", d)
+// handleCaddyConfigGET renders the live main Caddyfile in the structured/Raw editor.
+func (s *Server) handleCaddyConfigGET(w http.ResponseWriter, r *http.Request) {
+	content, err := s.Caddy.ReadConfig()
+	data := caddyConfigPageData{Config: string(content), ActiveTab: "base"}
+	if err != nil {
+		data.Error = err.Error()
+	}
+	s.render(w, r, "caddy_config", "Caddy 配置", data)
 }
 
-// handleCaddyService starts/stops/restarts caddy.service.
+// handleCaddyConfigPOST formats, validates or saves the submitted Caddyfile.
+func (s *Server) handleCaddyConfigPOST(w http.ResponseWriter, r *http.Request) {
+	content := r.FormValue("config")
+	activeTab := r.FormValue("editor_tab")
+	if activeTab != "base" && activeTab != "sites" && activeTab != "raw" {
+		activeTab = "raw"
+	}
+	data := caddyConfigPageData{Config: content, ActiveTab: activeTab}
+
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
+	switch r.FormValue("action") {
+	case "format":
+		formatted, err := s.Caddy.FormatConfig([]byte(content))
+		if err != nil {
+			data.Error = err.Error()
+		} else {
+			data.Config = string(formatted)
+			data.Notice = "格式化完成，尚未保存。"
+		}
+	case "validate":
+		if err := s.Caddy.ValidateConfig([]byte(content)); err != nil {
+			data.Error = err.Error()
+		} else {
+			data.Notice = "配置检查通过，尚未保存。"
+		}
+	case "save":
+		if err := s.Caddy.SaveConfig([]byte(content)); err != nil {
+			data.Error = err.Error()
+		} else {
+			s.setFlash(w, "Caddyfile 已校验、备份并保存；需要时请重载配置")
+			s.redirect(w, r, "/caddy")
+			return
+		}
+	default:
+		data.Error = "未知操作"
+	}
+	s.render(w, r, "caddy_config", "Caddy 配置", data)
+}
+
+// handleCaddyService starts/stops/restarts caddy.service or changes autostart.
 func (s *Server) handleCaddyService(w http.ResponseWriter, r *http.Request) {
 	action := r.FormValue("action")
-	if action != "start" && action != "stop" && action != "restart" {
+	if action != "start" && action != "stop" && action != "restart" &&
+		action != "enable" && action != "disable" {
 		s.setFlash(w, "未知操作")
-		s.redirect(w, r, "/caddy/sites")
+		s.redirect(w, r, "/caddy")
 		return
 	}
+	if action == "restart" {
+		// The POST itself is travelling through Caddy. Return an operation ID
+		// first, then wait briefly before restarting so the proxy can finish the
+		// response and the browser never lands on a broken POST URL.
+		operation, _, err := s.beginServiceRestart("caddy", "Caddy", 1200*time.Millisecond)
+		if err != nil {
+			s.setFlash(w, "无法提交 Caddy 重启请求："+err.Error())
+			s.redirect(w, r, "/caddy")
+			return
+		}
+		s.respondServiceOperation(w, r, operation, "/caddy")
+		return
+	}
+	s.caddyMu.Lock()
+	defer s.caddyMu.Unlock()
 	if err := sysd.Action(action, "caddy"); err != nil {
 		s.setFlash(w, "执行失败: "+err.Error())
 	} else {
-		s.setFlash(w, "Caddy 服务已执行 "+action)
+		switch action {
+		case "enable":
+			s.setFlash(w, "Caddy 已开启开机自启")
+		case "disable":
+			s.setFlash(w, "Caddy 已关闭开机自启（当前服务不会停止）")
+		default:
+			if action == "start" {
+				s.setFlash(w, "Caddy 已启动")
+			} else {
+				s.setFlash(w, "Caddy 已停止")
+			}
+		}
 	}
-	s.redirect(w, r, "/caddy/sites")
+	s.redirect(w, r, "/caddy")
 }

@@ -1,6 +1,7 @@
 package sites
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -35,6 +36,44 @@ const sampleMain = `# 主配置
 }
 `
 
+// TestExternalCaddyfile is an opt-in real-world regression check. It keeps
+// personal/server config out of the repository while allowing:
+// NAIVEPANEL_CADDYFILE=/path/to/Caddyfile go test ./internal/sites -run External -v
+func TestExternalCaddyfile(t *testing.T) {
+	path := os.Getenv("NAIVEPANEL_CADDYFILE")
+	if path == "" {
+		t.Skip("NAIVEPANEL_CADDYFILE is not set")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, list := SplitMain(string(content))
+	if len(list) == 0 {
+		t.Fatal("no inline site blocks found")
+	}
+	basePath := os.Getenv("NAIVEPANEL_BASE_PATH")
+	for _, site := range list {
+		got, err := Parse(site.Content, basePath, 1080)
+		if err != nil {
+			t.Errorf("%s: %v", site.Domain, err)
+			continue
+		}
+		rendered, err := Render(got, PanelInfo{BasePath: basePath, Listen: "127.0.0.1:9000"}, false, 1080)
+		if err != nil {
+			t.Errorf("%s render: %v", site.Domain, err)
+			continue
+		}
+		if _, err := Parse(rendered, basePath, 1080); err != nil {
+			t.Errorf("%s rendered round-trip: %v", site.Domain, err)
+			continue
+		}
+		t.Logf("%s: web=%s forward_proxy=%v site_options=%v extra_directives=%v",
+			got.Domain, got.Web.Type, got.ForwardProxy.Enabled,
+			got.SiteOptions != "", got.ExtraDirectives != "")
+	}
+}
+
 func TestSplitMain(t *testing.T) {
 	head, list := SplitMain(sampleMain)
 	if len(list) != 2 {
@@ -66,10 +105,11 @@ func TestSplitMainEmpty(t *testing.T) {
 
 func TestRenderMainPreserveKeepsHead(t *testing.T) {
 	head, _ := SplitMain(sampleMain)
-	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", true)
 	for _, want := range []string{
 		"email admin@example.com", // original global block wins
 		"(common)",
+		"order forward_proxy before file_server",
 		"import /etc/caddy/sites/*.caddy",
 	} {
 		if !strings.Contains(out, want) {
@@ -85,8 +125,8 @@ func TestRenderMainPreserveKeepsHead(t *testing.T) {
 }
 
 func TestRenderMainPreserveEmptyHead(t *testing.T) {
-	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites")
-	if !strings.HasPrefix(out, "{\n\temail admin@panel.example\n}") {
+	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites", true)
+	if !strings.HasPrefix(out, "{\n\temail admin@panel.example\n\torder forward_proxy before file_server\n}") {
 		t.Fatalf("expected synthesized global block:\n%s", out)
 	}
 	if !strings.Contains(out, "import /etc/caddy/sites/*.caddy") {
@@ -94,9 +134,24 @@ func TestRenderMainPreserveEmptyHead(t *testing.T) {
 	}
 }
 
+func TestRenderMainPreserveWithoutPluginDirective(t *testing.T) {
+	out := RenderMainPreserve("", "admin@panel.example", "/etc/caddy/sites", false)
+	if strings.Contains(out, "order forward_proxy") {
+		t.Fatalf("ordinary Caddy config gained plugin-only order:\n%s", out)
+	}
+}
+
+func TestRenderMainPreserveKeepsExistingForwardProxyOrder(t *testing.T) {
+	head := "{\n\torder forward_proxy first\n}"
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", true)
+	if strings.Count(out, "order forward_proxy") != 1 || !strings.Contains(out, "order forward_proxy first") {
+		t.Fatalf("existing order was replaced or duplicated:\n%s", out)
+	}
+}
+
 func TestRenderMainPreserveDedupesImport(t *testing.T) {
 	head := "{\n\temail a@b.c\n}\n\nimport /etc/caddy/sites/*.caddy"
-	out := RenderMainPreserve(head, "x@y.z", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "x@y.z", "/etc/caddy/sites", false)
 	if strings.Count(out, "import /etc/caddy/sites/*.caddy") != 1 {
 		t.Fatalf("duplicate import lines:\n%s", out)
 	}
@@ -106,7 +161,7 @@ func TestRenderMainPreserveDedupesImport(t *testing.T) {
 // available for migration and produce a main file that parses again.
 func TestSplitMainRoundTrip(t *testing.T) {
 	head, list := SplitMain(sampleMain)
-	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites")
+	out := RenderMainPreserve(head, "admin@panel.example", "/etc/caddy/sites", false)
 	head2, list2 := SplitMain(out)
 	if len(list2) != 0 {
 		t.Fatalf("rendered main file should have no inline sites, got %d", len(list2))

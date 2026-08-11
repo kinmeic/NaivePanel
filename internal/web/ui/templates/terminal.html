@@ -24,7 +24,6 @@
       <button name="action" value="stop" class="btn">{{icon "square"}}停止</button>
       <button name="action" value="restart" class="btn">{{icon "rotate-cw"}}重启</button>
     </form>
-    <p><a class="btn" href="{{.Base}}/logs?service=ttyd">{{icon "scroll-text"}}查看日志</a></p>
   </div>
   {{end}}
 </div>
@@ -34,5 +33,20 @@
 <p class="muted">root shell（bash）。终端经面板会话鉴权反代，请勿把面板账号借予不信任的人。</p>
 {{else if .Data.Installed}}
 <p class="muted">ttyd 未运行，启动后此处会嵌入终端。</p>
+{{end}}
+
+{{if .Data.Installed}}
+<h2>{{icon "scroll-text"}}服务日志</h2>
+<p class="muted">来自 systemd journal 的 ttyd 运行日志（最新在最后）。</p>
+<div class="logbar">
+  <span class="muted">行数：</span>
+  <a class="btn {{if eq .Data.LogLines 100}}active{{end}}" href="{{.Base}}/terminal?lines=100">100</a>
+  <a class="btn {{if eq .Data.LogLines 200}}active{{end}}" href="{{.Base}}/terminal?lines=200">200</a>
+  <a class="btn {{if eq .Data.LogLines 500}}active{{end}}" href="{{.Base}}/terminal?lines=500">500</a>
+  <a class="btn {{if eq .Data.LogLines 1000}}active{{end}}" href="{{.Base}}/terminal?lines=1000">1000</a>
+  <a class="btn" href="{{.Base}}/terminal?lines={{.Data.LogLines}}">{{icon "refresh-cw"}}刷新</a>
+</div>
+{{if .Data.LogError}}<div class="error">{{.Data.LogError}}</div>{{end}}
+{{if .Data.LogContent}}<pre class="preview logs">{{.Data.LogContent}}</pre>{{end}}
 {{end}}
 {{end}}

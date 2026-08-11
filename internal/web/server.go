@@ -9,16 +9,21 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/auth"
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/caddymgr"
 	"github.com/kinmeic/NaivePanel/internal/config"
+	"github.com/kinmeic/NaivePanel/internal/cronmgr"
 	"github.com/kinmeic/NaivePanel/internal/sites"
+	"github.com/kinmeic/NaivePanel/internal/sysd"
+	"github.com/kinmeic/NaivePanel/internal/systemstats"
 	"github.com/kinmeic/NaivePanel/internal/terminal"
 )
 
@@ -30,6 +35,8 @@ type Server struct {
 	Cfg      *config.Config
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
+	Cron     *cronmgr.Manager
+	Stats    *systemstats.Sampler
 	Terminal *terminal.Manager
 	Sessions *auth.Store
 	Limiter  *auth.Limiter
@@ -37,29 +44,54 @@ type Server struct {
 
 	pages map[string]*template.Template
 	mux   *http.ServeMux
+
+	// caddyMu keeps model mutations and the corresponding validate/apply/
+	// rollback pipeline as one transaction across concurrent admin requests.
+	caddyMu sync.Mutex
+
+	// serviceOps tracks asynchronous restarts. Caddy carries the panel's own
+	// HTTP connection, so its restart must begin only after the response has
+	// reached the browser. Keeping the operation server-side also lets repeated
+	// clicks attach to the same restart instead of issuing another one.
+	serviceOpsMu     sync.Mutex
+	serviceOps       map[string]*serviceOperation
+	activeServiceOps map[string]string
+	serviceAction    func(string, string) error
+	serviceActive    func(string) bool
 }
 
 // pageData is the common template payload.
 type pageData struct {
-	Base  string
-	CSRF  string
-	User  string
-	Flash string
-	Title string
-	Data  any
+	Base    string
+	CSRF    string
+	User    string
+	Flash   string
+	Title   string
+	Version string
+	Data    any
 }
 
 // New builds the server and its routes.
 func New(cfg *config.Config, version string) (*Server, error) {
+	cron, err := cronmgr.New(cronmgr.DefaultPaths(cfg.SourcePath()))
+	if err != nil {
+		return nil, fmt.Errorf("初始化计划任务: %w", err)
+	}
 	s := &Server{
-		Cfg:      cfg,
-		Caddy:    caddymgr.New(cfg),
-		Bypass:   bypasscore.New(cfg),
-		Terminal: terminal.New(cfg),
-		Sessions: auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
-		Limiter:  auth.NewLimiter(5, 15*time.Minute),
-		Version:  version,
-		pages:    map[string]*template.Template{},
+		Cfg:              cfg,
+		Caddy:            caddymgr.New(cfg),
+		Bypass:           bypasscore.New(cfg),
+		Cron:             cron,
+		Stats:            systemstats.New(),
+		Terminal:         terminal.New(cfg),
+		Sessions:         auth.NewStore(time.Duration(cfg.SessionTTLHours) * time.Hour),
+		Limiter:          auth.NewLimiter(5, 15*time.Minute),
+		Version:          version,
+		pages:            map[string]*template.Template{},
+		serviceOps:       map[string]*serviceOperation{},
+		activeServiceOps: map[string]string{},
+		serviceAction:    sysd.Action,
+		serviceActive:    sysd.IsActive,
 	}
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
@@ -83,6 +115,14 @@ func (s *Server) parseTemplates() error {
 				return "-"
 			}
 			return t.Format("2006-01-02 15:04:05")
+		},
+		"flashError": func(msg string) bool {
+			for _, marker := range []string{"失败", "错误", "异常", "未知", "不存在", "不可", "中止"} {
+				if strings.Contains(msg, marker) {
+					return true
+				}
+			}
+			return false
 		},
 	}
 	entries, err := fs.ReadDir(uiFS, "ui/templates")
@@ -129,28 +169,35 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/logout", s.protect(s.handleLogout))
 
 	s.mux.HandleFunc("GET "+bp+"/{$}", s.protect(s.handleDashboard))
+	s.mux.HandleFunc("GET "+bp+"/system/stats", s.protect(s.handleSystemStats))
 
-	s.mux.HandleFunc("GET "+bp+"/sites", s.protect(s.redirectTo("/caddy/sites")))
-	s.mux.HandleFunc("GET "+bp+"/sites/new", s.protect(s.handleSiteNew))
-	s.mux.HandleFunc("POST "+bp+"/sites/new", s.protect(s.handleSiteCreate))
-	s.mux.HandleFunc("GET "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteEdit))
-	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/edit", s.protect(s.handleSiteUpdate))
-	s.mux.HandleFunc("POST "+bp+"/sites/{domain}/delete", s.protect(s.handleSiteDelete))
-	s.mux.HandleFunc("POST "+bp+"/sites/preview-render", s.protect(s.handleSitePreviewRender))
+	s.mux.HandleFunc("GET "+bp+"/cron", s.protect(s.handleCron))
+	s.mux.HandleFunc("GET "+bp+"/cron/new", s.protect(s.handleCronNew))
+	s.mux.HandleFunc("POST "+bp+"/cron/new", s.protect(s.handleCronCreate))
+	s.mux.HandleFunc("GET "+bp+"/cron/{id}/edit", s.protect(s.handleCronEdit))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/edit", s.protect(s.handleCronUpdate))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/toggle", s.protect(s.handleCronToggle))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/run", s.protect(s.handleCronRun))
+	s.mux.HandleFunc("POST "+bp+"/cron/{id}/delete", s.protect(s.handleCronDelete))
+	s.mux.HandleFunc("POST "+bp+"/cron/service", s.protect(s.handleCronService))
 
-	s.mux.HandleFunc("GET "+bp+"/caddy", s.protect(s.redirectTo("/caddy/sites")))
-	s.mux.HandleFunc("GET "+bp+"/caddy/sites", s.protect(s.handleCaddySites))
-	s.mux.HandleFunc("GET "+bp+"/caddy/sites/list", s.protect(s.handleSiteList))
-	s.mux.HandleFunc("GET "+bp+"/caddy/config", s.protect(s.handleCaddyConfig))
+	s.mux.HandleFunc("GET "+bp+"/sites", s.protect(s.redirectTo("/caddy")))
+	s.mux.HandleFunc("GET "+bp+"/caddy", s.protect(s.handleCaddy))
+	s.mux.HandleFunc("GET "+bp+"/caddy/sites", s.protect(s.redirectTo("/caddy")))
+	s.mux.HandleFunc("GET "+bp+"/caddy/config", s.protect(s.handleCaddyConfigGET))
+	s.mux.HandleFunc("POST "+bp+"/caddy/config", s.protect(s.handleCaddyConfigPOST))
 	s.mux.HandleFunc("GET "+bp+"/caddy/preview", s.protect(s.redirectTo("/caddy/config")))
 	s.mux.HandleFunc("POST "+bp+"/caddy/reload", s.protect(s.handleCaddyReload))
 	s.mux.HandleFunc("POST "+bp+"/caddy/service", s.protect(s.handleCaddyService))
 
 	s.mux.HandleFunc("GET "+bp+"/bypasscore", s.protect(s.handleBypass))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/install", s.protect(s.handleBypassInstall))
+	s.mux.HandleFunc("POST "+bp+"/bypasscore/update/check", s.protect(s.handleBypassUpdateCheck))
+	s.mux.HandleFunc("POST "+bp+"/bypasscore/control/enable", s.protect(s.handleBypassControlEnable))
 	s.mux.HandleFunc("GET "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigGET))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
+	s.mux.HandleFunc("GET "+bp+"/service-operations/{id}", s.protect(s.handleServiceOperation))
 
 	s.mux.HandleFunc("GET "+bp+"/terminal", s.protect(s.handleTerminal))
 	s.mux.HandleFunc("POST "+bp+"/terminal/install", s.protect(s.handleTerminalInstall))
@@ -161,22 +208,50 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET "+bp+"/geo", s.protect(s.handleGeo))
 	s.mux.HandleFunc("GET "+bp+"/logs", s.protect(s.handleLogs))
+	s.mux.HandleFunc("POST "+bp+"/geo/check", s.protect(s.handleGeoCheck))
 	s.mux.HandleFunc("POST "+bp+"/geo/update", s.protect(s.handleGeoUpdate))
-	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleGeoSettings))
+	// Keep former endpoints for already-open pages and existing bookmarks.
+	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleUpdateSettings))
 
 	s.mux.HandleFunc("GET "+bp+"/settings", s.protect(s.handleSettings))
+	s.mux.HandleFunc("POST "+bp+"/settings/update", s.protect(s.handleUpdateSettings))
+	s.mux.HandleFunc("POST "+bp+"/settings/geo", s.protect(s.handleUpdateSettings))
+	s.mux.HandleFunc("GET "+bp+"/security", s.protect(s.handleSecurity))
+	s.mux.HandleFunc("POST "+bp+"/security/password", s.protect(s.handlePasswordChange))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/setup", s.protect(s.handleTOTPSetup))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/confirm", s.protect(s.handleTOTPConfirm))
+	s.mux.HandleFunc("POST "+bp+"/security/totp/disable", s.protect(s.handleTOTPDisable))
+	// Keep the former POST paths working for one release so an already-open
+	// page cannot fail after an in-place panel update.
 	s.mux.HandleFunc("POST "+bp+"/settings/password", s.protect(s.handlePasswordChange))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/setup", s.protect(s.handleTOTPSetup))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/confirm", s.protect(s.handleTOTPConfirm))
 	s.mux.HandleFunc("POST "+bp+"/settings/totp/disable", s.protect(s.handleTOTPDisable))
-	s.mux.HandleFunc("POST "+bp+"/settings/hostsite", s.protect(s.handleHostSite))
 	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate", s.protect(s.handleSelfUpdate))
 	s.mux.HandleFunc("POST "+bp+"/settings/selfupdate/check", s.protect(s.handleSelfUpdateCheck))
 }
 
 // Handler returns the root handler with the HTTPS gate and security headers.
 func (s *Server) Handler() http.Handler {
-	return s.proxyGate(s.securityHeaders(s.mux))
+	return s.proxyGate(s.securityHeaders(s.limitRequestBody(s.mux)))
+}
+
+const maxRequestBody = 2 << 20
+
+// limitRequestBody bounds every state-changing request before form parsing.
+// This protects the root-running panel from accidental or hostile memory and
+// disk pressure while leaving ample room for BypassCore/Caddy configuration.
+func (s *Server) limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if r.ContentLength > maxRequestBody {
+				http.Error(w, "请求内容过大（上限 2 MiB）", http.StatusRequestEntityTooLarge)
+				return
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // proxyGate only serves requests that arrive through Caddy's HTTPS reverse
@@ -199,13 +274,16 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	// strict CSP and frame denial.
 	uiPrefix := s.Cfg.BasePath + "/terminal/ui"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, uiPrefix) {
-			w.Header().Set("X-Frame-Options", "DENY")
-			w.Header().Set("Content-Security-Policy",
-				"default-src 'self'; style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
-		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		if !strings.HasPrefix(r.URL.Path, uiPrefix) {
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+			w.Header().Set("Content-Security-Policy",
+				"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "+
+					"style-src 'self'; img-src 'self' data:; script-src 'self'; form-action 'self'")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -223,13 +301,61 @@ func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
+			recorder := &statusRecorder{ResponseWriter: w}
+			started := time.Now()
 			if subtle.ConstantTimeCompare([]byte(r.FormValue("_csrf")), []byte(sess.CSRF)) != 1 {
-				http.Error(w, "CSRF 校验失败", http.StatusForbidden)
+				http.Error(recorder, "CSRF 校验失败", http.StatusForbidden)
+				s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
 				return
 			}
+			h(recorder, r)
+			s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
+			return
 		}
 		h(w, r)
 	}
+}
+
+const operationLogMarker = "naivepanel-operation"
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *statusRecorder) statusCode() int {
+	if w.status == 0 {
+		return http.StatusOK
+	}
+	return w.status
+}
+
+func (s *Server) logOperation(user string, r *http.Request, status int, elapsed time.Duration) {
+	path := strings.TrimPrefix(r.URL.Path, s.Cfg.BasePath)
+	if path == "" {
+		path = "/"
+	}
+	log.Printf("%s user=%q method=%q path=%q status=%d duration_ms=%d",
+		operationLogMarker, user, r.Method, path, status, elapsed.Milliseconds())
 }
 
 func (s *Server) session(r *http.Request) *auth.Session {
@@ -241,16 +367,18 @@ func (s *Server) session(r *http.Request) *auth.Session {
 }
 
 // render executes a page template.
-func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {	t := s.pages[page]
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page, title string, data any) {
+	t := s.pages[page]
 	if t == nil {
 		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
 		return
 	}
 	d := pageData{
-		Base:  s.Cfg.BasePath,
-		Title: title,
-		Flash: s.takeFlash(w, r),
-		Data:  data,
+		Base:    s.Cfg.BasePath,
+		Title:   title,
+		Version: s.Version,
+		Flash:   s.takeFlash(w, r),
+		Data:    data,
 	}
 	if sess := s.session(r); sess != nil {
 		d.CSRF = sess.CSRF
@@ -279,7 +407,7 @@ func (s *Server) renderFrag(w http.ResponseWriter, r *http.Request, page string,
 		http.Error(w, "模板不存在: "+page, http.StatusInternalServerError)
 		return
 	}
-	d := pageData{Base: s.Cfg.BasePath, Data: data}
+	d := pageData{Base: s.Cfg.BasePath, Version: s.Version, Data: data}
 	if sess := s.session(r); sess != nil {
 		d.CSRF = sess.CSRF
 		d.User = sess.User

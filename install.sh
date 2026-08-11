@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ============ 可调参数 ============
-GO_VERSION="1.23.4"
+GO_VERSION="1.26.5"
 # 钉住的 Caddy 版本。已实测 v2.10.2 + klzgrad/forwardproxy@naive 编译通过
 # 且包含 http.handlers.forward_proxy；升级前先本地试编译再改。
 CADDY_PIN="v2.10.2"
@@ -82,7 +82,8 @@ ok "配置确认: 域名=$DOMAIN 路径=$BASE_PATH 账号=$ADMIN_USER"
 # ---------- 2. 基础依赖 ----------
 info "安装基础依赖..."
 apt-get update -qq
-apt-get install -y -qq curl wget tar gnupg lsb-release ca-certificates debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+apt-get install -y -qq curl wget tar cron gnupg lsb-release ca-certificates debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+systemctl enable --now cron >/dev/null 2>&1 || true
 ok "基础依赖就绪"
 
 # ---------- 3. 安装 Go ----------
@@ -91,13 +92,24 @@ install_go() {
   local tarball="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
   curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}" \
     || curl -fsSL "https://dl.google.com/go/${tarball}" -o "/tmp/${tarball}"
+  curl -fsSL "https://go.dev/dl/${tarball}.sha256" -o "/tmp/${tarball}.sha256" \
+    || curl -fsSL "https://dl.google.com/go/${tarball}.sha256" -o "/tmp/${tarball}.sha256"
+  local go_sha
+  go_sha="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
+  [[ "$go_sha" =~ ^[0-9a-fA-F]{64}$ ]] || die "Go 下载校验文件格式异常"
+  echo "${go_sha}  /tmp/${tarball}" | sha256sum -c - >/dev/null \
+    || die "Go 下载包 SHA256 校验失败"
   rm -rf /usr/local/go
   tar -C /usr/local -xzf "/tmp/${tarball}"
-  rm -f "/tmp/${tarball}"
+  rm -f "/tmp/${tarball}" "/tmp/${tarball}.sha256"
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 }
-if command -v go >/dev/null && go version | grep -qE 'go1\.(2[2-9]|[3-9][0-9])'; then
+CURRENT_GO=""
+if command -v go >/dev/null; then
+  CURRENT_GO="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
+fi
+if [[ -n "$CURRENT_GO" && "$(printf '%s\n' "$GO_VERSION" "$CURRENT_GO" | sort -V | head -n1)" == "$GO_VERSION" ]]; then
   ok "Go 已安装: $(go version | awk '{print $3}')"
 else
   install_go
@@ -223,7 +235,6 @@ bypasscore:
   work_dir: /etc/bypasscore
 geo:
   dir: /etc/bypasscore
-  auto_update_weekly: false
 backup_dir: $PANEL_CONFIG_DIR/backups
 sites:
   - domain: $DOMAIN
@@ -253,6 +264,7 @@ info "生成初始 Caddy 配置..."
 cat > /etc/caddy/Caddyfile <<EOF
 {
 	email admin@$DOMAIN
+	order forward_proxy before file_server
 }
 
 import $CADDY_SITES_DIR/*.caddy
@@ -260,18 +272,16 @@ EOF
 
 cat > "$CADDY_SITES_DIR/$DOMAIN.caddy" <<EOF
 :443, $DOMAIN {
-	route {
-		handle $BASE_PATH/* {
-			reverse_proxy 127.0.0.1:9000 {
-				header_up X-NaivePanel-Key $PROXY_TOKEN
-			}
+	handle $BASE_PATH/* {
+		reverse_proxy 127.0.0.1:9000 {
+			header_up X-NaivePanel-Key $PROXY_TOKEN
 		}
-		redir $BASE_PATH $BASE_PATH/ 308
-
-		root * /var/www/$DOMAIN
-		encode gzip zstd
-		file_server
 	}
+	redir $BASE_PATH $BASE_PATH/ 308
+
+	root * /var/www/$DOMAIN
+	encode gzip zstd
+	file_server
 }
 EOF
 chmod 600 "$CADDY_SITES_DIR/$DOMAIN.caddy"
