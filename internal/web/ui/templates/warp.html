@@ -1,0 +1,85 @@
+{{define "content"}}
+<div data-warp-page data-return-url="{{.Base}}/warp" {{if .Data.Operation}}data-operation-url="{{.Base}}/service-operations/{{.Data.Operation.ID}}"{{end}} {{if or (eq .Data.Connection "connecting") (eq .Data.Connection "disconnecting")}}data-connection-pending{{end}}>
+<h1>WARP</h1>
+<div class="cards">
+  <div class="card">
+    <h3>{{icon "power"}}服务控制</h3>
+    <div class="service-status-line">
+      <span class="service-status-item">服务：{{if .Data.Installed}}{{if .Data.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}{{else}}<span class="muted">未安装</span>{{end}}</span>
+      <span class="service-status-item">开机自启：{{if .Data.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</span>
+    </div>
+    <div class="service-actions">
+      <form method="post" action="{{.Base}}/warp/service" class="warp-service-controls" data-warp-form>
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <button name="action" value="install" class="btn" {{if .Data.Installed}}disabled{{end}}>{{icon "download"}}安装</button>
+        <button name="action" value="register" class="btn" {{if or (not .Data.Installed) .Data.Registered}}disabled{{end}}>{{icon "plus"}}注册</button>
+        <button name="action" value="connect" class="btn" {{if or (not .Data.Installed) (and .Data.RegistrationKnown (not .Data.Registered)) (eq .Data.Connection "connected") (eq .Data.Connection "connecting")}}disabled{{end}}>{{icon "play"}}连接</button>
+        <button name="action" value="disconnect" class="btn" {{if or (not .Data.Installed) (not .Data.Active) (eq .Data.Connection "disconnected")}}disabled{{end}}>{{icon "square"}}断开连接</button>
+      </form>
+      <a class="btn" href="{{.Base}}/warp">{{icon "refresh-cw"}}刷新状态</a>
+    </div>
+    <p class="muted">首次使用：安装 → 注册 → 连接。注册和连接操作会在需要时启动服务。</p>
+    <p class="muted">安装使用 Cloudflare 官方软件源，可能需要数分钟；注册即接受 Cloudflare 的服务条款。</p>
+  </div>
+  <div class="card">
+    <h3>{{icon "settings-2"}}代理设置</h3>
+    <form method="post" action="{{.Base}}/warp/settings" data-warp-form>
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label for="warp-mode">模式</label>
+      <input id="warp-mode" type="text" value="proxy" readonly>
+      <label for="warp-port">本地代理端口</label>
+      <input id="warp-port" type="number" name="port" value="{{.Data.SuggestedPort}}" min="1" max="65535" required {{if not .Data.Registered}}disabled{{end}}>
+      <p class="muted">仅监听 <code>127.0.0.1</code>。修改端口会短暂断开连接；已连接的客户端会重新连接。</p>
+      <button type="submit" class="primary" {{if not .Data.Registered}}disabled{{end}}>{{icon "save"}}保存设置</button>
+    </form>
+    {{if .Data.Mode}}<p class="muted">客户端当前模式：<code>{{.Data.Mode}}</code>{{if .Data.Port}}，端口：<code>{{.Data.Port}}</code>{{end}}</p>{{else}}<p class="muted">客户端模式和端口暂不可读取；默认端口为 40000。</p>{{end}}
+    {{if and .Data.Mode (ne .Data.Mode "proxy")}}<div class="warning">客户端当前模式不是 proxy，保存设置或连接时将切换为 proxy。</div>{{end}}
+  </div>
+</div>
+<div id="warp-operation-progress" class="operation-progress hidden" role="status" aria-live="polite">
+  <div class="operation-progress-head"><span class="spinner" aria-hidden="true"></span><strong data-operation-title>正在处理 WARP 操作</strong></div>
+  <div class="operation-progress-track"><span data-operation-bar></span></div>
+  <p data-operation-message>正在提交请求…</p>
+</div>
+<h2>{{icon "activity"}}运行状态</h2>
+<div class="cards runtime-summary">
+  <div class="card compact-card">
+    <span class="muted">注册状态</span>
+    {{if .Data.Registered}}<strong class="runtime-value ok">已注册</strong>{{else if .Data.RegistrationKnown}}<strong class="runtime-value warn">未注册</strong>{{else}}<strong class="runtime-value muted">{{if .Data.Installed}}未知{{else}}未安装{{end}}</strong>{{end}}
+    {{if .Data.AccountType}}<small class="muted">账号类型：{{.Data.AccountType}}</small>{{end}}
+    {{if .Data.DeviceID}}<small class="muted">设备 ID：{{.Data.DeviceID}}</small>{{end}}
+  </div>
+  <div class="card compact-card">
+    <span class="muted">连接状态</span>
+    <strong class="runtime-value {{.Data.ConnectionClass}}">{{.Data.ConnectionLabel}}</strong>
+    {{if and (eq .Data.Mode "proxy") .Data.Port}}<small class="muted">代理地址：<code>127.0.0.1:{{.Data.Port}}</code></small>{{end}}
+    <div class="service-actions">
+      <form method="post" action="{{.Base}}/warp/egress" data-warp-egress-form>
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <button type="submit" class="btn" {{if or (not .Data.Active) (ne .Data.Mode "proxy") (not .Data.Port)}}disabled{{end}}>{{icon "globe"}}出口验证</button>
+      </form>
+    </div>
+  </div>
+</div>
+<div id="warp-egress-result" class="card runtime-section hidden" role="status" aria-live="polite">
+  <strong data-egress-title>出口验证</strong>
+  <p data-egress-summary></p>
+  <details class="technical-details hidden" data-egress-details>
+    <summary>查看 Cloudflare trace 原始响应</summary>
+    <pre class="preview" data-egress-raw></pre>
+  </details>
+</div>
+{{range .Data.Errors}}<div class="warning">{{.}}</div>{{end}}
+<h2>{{icon "key-round"}}绑定/变更 license（可选）</h2>
+<div class="card">
+  <p class="muted">已注册的客户端可绑定 WARP+ license。不填写也可以使用 WARP；当前账号类型显示在注册状态中。</p>
+  <form method="post" action="{{.Base}}/warp/license" data-warp-form>
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <label for="warp-license">License key</label>
+    <input id="warp-license" type="password" name="license" placeholder="xxxxxxxx-xxxxxxxx-xxxxxxxx" autocomplete="off" spellcheck="false" required maxlength="26" {{if not .Data.Registered}}disabled{{end}}>
+    <div class="service-actions"><button type="submit" class="primary" {{if not .Data.Registered}}disabled{{end}}>{{icon "key-round"}}绑定/变更 license</button></div>
+  </form>
+</div>
+</div>
+<script src="{{.Base}}/static/warp.js"></script>
+{{end}}

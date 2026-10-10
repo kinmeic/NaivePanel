@@ -18,6 +18,7 @@
     <a href="{{.Base}}/" class="{{if eq .Title "概览"}}active{{end}}">{{icon "gauge"}}<span>概览</span></a>
     <a href="{{.Base}}/caddy" class="{{if or (eq .Title "Caddy") (eq .Title "Caddy 配置")}}active{{end}}">{{icon "file-cog"}}<span>Caddy</span></a>
     <a href="{{.Base}}/bypasscore" class="{{if or (eq .Title "BypassCore") (eq .Title "BypassCore 配置")}}active{{end}}">{{icon "route"}}<span>BypassCore</span></a>
+    <a href="{{.Base}}/warp" class="{{if eq .Title "WARP"}}active{{end}}">{{icon "globe"}}<span>WARP</span></a>
     <a href="{{.Base}}/terminal" class="{{if eq .Title "终端"}}active{{end}}">{{icon "terminal"}}<span>终端</span></a>
     <a href="{{.Base}}/geo" class="{{if eq .Title "Geo 数据文件"}}active{{end}}">{{icon "map"}}<span>Geo 数据</span></a>
     <a href="{{.Base}}/cron" class="{{if or (eq .Title "计划任务") (eq .Title "新建计划任务") (eq .Title "编辑计划任务")}}active{{end}}">{{icon "clock-3"}}<span>计划任务</span></a>

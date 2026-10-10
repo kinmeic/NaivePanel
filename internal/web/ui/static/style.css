@@ -165,6 +165,7 @@ button svg.lucide, .btn svg.lucide { margin-right: 5px; }
 .service-status-item { white-space: nowrap; }
 .service-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
 .service-actions form { display: inline-flex; align-items: center; gap: 8px; margin: 0; }
+.service-actions form.warp-service-controls { flex-wrap: wrap; }
 .path-code { overflow-wrap: anywhere; word-break: break-word; }
 .operation-progress {
   max-width: 680px; margin: 14px 0; padding: 12px 14px;

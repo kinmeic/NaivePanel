@@ -1,7 +1,7 @@
 # NaivePanel
 
 Linux 服务器面板（Go 单二进制）：管理定制 Caddy（NaiveProxy forwardproxy）、多站点、
-BypassCore 分流核心与 Geo 数据文件。
+BypassCore 分流核心、Cloudflare WARP 与 Geo 数据文件。
 
 详细设计见 [DESIGN.md](DESIGN.md)。
 
@@ -20,12 +20,33 @@ BypassCore 分流核心与 Geo 数据文件。
   control / inbounds / outbounds / routing / dns 结构化配置与 Raw JSON 无损格式化、
   `-check-config` → 控制面事务热重载、
   服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
+- **WARP**：官方客户端安装、注册、连接/断开；固定 proxy 模式、本地代理端口设置、
+  注册与连接状态、SOCKS5 出口验证、可选 WARP+ license 绑定/变更；后台操作进度与并发保护
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动更新、镜像源
 - **日志**：查看面板操作审计记录，以及 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 
 Caddy 编辑器只维护 `caddy.main_file` 指向的主 Caddyfile；该文件导入的其他片段仍由 Caddy
 正常加载，但不会被拼接进编辑器，避免保存主文件时意外改写外部配置。
+
+## WARP
+
+左侧 BypassCore 下方的 **WARP** 页面按「安装 → 注册 → 连接」使用。
+模式固定为 `proxy`，默认端口 `40000`；端口通过官方 `warp-cli` 写入客户端配置，
+面板读取客户端实际设置。修改端口会断开当前连接，原先已连接时会重新连接。
+连接前会设置 MASQUE 协议并确认实际模式和端口，设置失败时保持断开。
+连接状态卡片中的「出口验证」通过客户端当前 SOCKS5 端口请求
+`https://www.cloudflare.com/cdn-cgi/trace`，显示出口 IP、地区、节点、WARP 状态及原始响应；
+只有 `warp=on` 或 `warp=plus` 才判定为验证通过。
+
+自动安装使用 [Cloudflare 官方软件源](https://pkg.cloudflareclient.com/)，支持 Linux + systemd
+的 amd64/arm64：Debian 12/13、Ubuntu 22.04/24.04/26.04、RHEL 系列 9/10、Fedora 43/44；
+RHEL 系列需具备可用的 EPEL 软件源。其他发行版可按官方说明先安装 `cloudflare-warp`，
+面板通过系统 PATH 中的 `warp-cli` 管理客户端。
+安装会启动并启用 `warp-svc` 自启，注册后才可连接；安装和注册不会主动建立连接。
+注册即接受 Cloudflare 服务条款。WARP+ license 为可选项，使用方式参见
+[Cloudflare Linux 客户端说明](https://developers.cloudflare.com/warp-client/get-started/linux/)。
+面板不保存 license，也不会在页面或操作返回中显示密钥。
 
 ## 安装
 
@@ -59,7 +80,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.4.9
+VER=v0.5.3
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"

@@ -25,6 +25,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 	"github.com/kinmeic/NaivePanel/internal/systemstats"
 	"github.com/kinmeic/NaivePanel/internal/terminal"
+	"github.com/kinmeic/NaivePanel/internal/warp"
 )
 
 //go:embed ui/templates ui/static
@@ -35,6 +36,7 @@ type Server struct {
 	Cfg      *config.Config
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
+	WARP     warpService
 	Cron     *cronmgr.Manager
 	Stats    *systemstats.Sampler
 	Terminal *terminal.Manager
@@ -81,6 +83,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		Cfg:              cfg,
 		Caddy:            caddymgr.New(cfg),
 		Bypass:           bypasscore.New(cfg),
+		WARP:             warp.New(),
 		Cron:             cron,
 		Stats:            systemstats.New(),
 		Terminal:         terminal.New(cfg),
@@ -198,6 +201,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
 	s.mux.HandleFunc("GET "+bp+"/service-operations/{id}", s.protect(s.handleServiceOperation))
+	s.mux.HandleFunc("GET "+bp+"/warp", s.protect(s.handleWARP))
+	s.mux.HandleFunc("POST "+bp+"/warp/service", s.protect(s.handleWARPService))
+	s.mux.HandleFunc("POST "+bp+"/warp/settings", s.protect(s.handleWARPSettings))
+	s.mux.HandleFunc("POST "+bp+"/warp/license", s.protect(s.handleWARPLicense))
+	s.mux.HandleFunc("POST "+bp+"/warp/egress", s.protect(s.handleWARPEgress))
 
 	s.mux.HandleFunc("GET "+bp+"/terminal", s.protect(s.handleTerminal))
 	s.mux.HandleFunc("POST "+bp+"/terminal/install", s.protect(s.handleTerminalInstall))
