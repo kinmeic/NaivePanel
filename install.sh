@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ============ 可调参数 ============
-GO_VERSION="1.26.5"
+GO_VERSION="1.26.10"
 # 钉住的 Caddy 版本。已实测 v2.10.2 + klzgrad/forwardproxy@naive 编译通过
 # 且包含 http.handlers.forward_proxy；升级前先本地试编译再改。
 CADDY_PIN="v2.10.2"
