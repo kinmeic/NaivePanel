@@ -27,12 +27,13 @@ jobs:
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
+            mkdir -p "${RUNNER_TEMP}/naivepanel-${arch}"
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
               -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" \
-              -o naivepanel ./cmd/naivepanel
-            tar -czf "naivepanel-linux-${arch}.tar.gz" naivepanel
+              -o "${RUNNER_TEMP}/naivepanel-${arch}/naivepanel" ./cmd/naivepanel
+            tar -czf "naivepanel-linux-${arch}.tar.gz" \
+              -C "${RUNNER_TEMP}/naivepanel-${arch}" naivepanel
           done
-          rm -f naivepanel
           sha256sum naivepanel-linux-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
