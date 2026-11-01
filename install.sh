@@ -4,10 +4,23 @@
 set -euo pipefail
 
 # ============ 可调参数 ============
-GO_VERSION="1.26.10"
-# 钉住的 Caddy 版本。已实测 v2.10.2 + klzgrad/forwardproxy@naive 编译通过
-# 且包含 http.handlers.forward_proxy；升级前先本地试编译再改。
-CADDY_PIN="v2.10.2"
+# Go 版本：跟随最新稳定版，避免旧版标准库漏洞（Caddy v2.11.7 要求 go >= 1.26.0）
+GO_VERSION="${NAIVEPANEL_GO_VERSION:-1.27.3}"
+# 钉住的 Caddy 版本：v2.11.7 是当前最新稳定版，已覆盖迄今全部公开发布的安全公告
+# （GHSA-6365-7ppr-5r92、CVE-2026-55458、CVE-2026-52844/52845/52846、CVE-2026-45692、
+# CVE-2026-45135、CVE-2026-30851/30852、CVE-2026-27585~27590 等，修复版本均 <= v2.11.5）。
+# 实测 v2.11.7 + 下面的 forwardproxy naive 提交编译通过，含 http.handlers.forward_proxy。
+# 升级前先本地试编译再改（可用环境变量 NAIVEPANEL_CADDY_VERSION 临时覆盖）。
+CADDY_PIN="${NAIVEPANEL_CADDY_VERSION:-v2.11.7}"
+# forwardproxy：源为 github.com/klzgrad/forwardproxy 的 naive 分支（NaiveProxy 服务端）。
+# 固定到 naive 分支提交 c096d6a（= 该仓库 tag v2.11.7-naive）：
+#   * 仓库 module path 无 /v2，Go modules 不接受 v2.x tag，故只能写伪版本号；
+#   * naive 分支 HEAD（e747854）依赖 caddyhttp.IdleTimeoutsFromContext，
+#     该 API 只存在于未发布的 caddy master（v2.11.8-dev），配合 v2.11.7 会编译失败，
+#     因此这里钉在能与稳定版 Caddy 配套的最新提交上，而不是跟随分支 HEAD。
+FORWARDPROXY_PIN="${NAIVEPANEL_FORWARDPROXY_PIN:-v0.0.0-20261006113151-c096d6a00cb2}"
+# xcaddy 也钉版本，避免 @latest 引入未预期变更
+XCADDY_VERSION="${NAIVEPANEL_XCADDY_VERSION:-v0.4.7}"
 GOPROXY_DEFAULT="https://goproxy.cn,direct"
 PANEL_BIN="/usr/local/bin/naivepanel"
 # 定制 Caddy 直接覆盖官方二进制（官方包用 apt-mark hold 锁定防升级回覆盖）
@@ -166,18 +179,25 @@ ok "Caddy 官方安装完成"
 CADDY_BIN="$(command -v caddy)"
 
 # ---------- 5. xcaddy 编译定制 Caddy ----------
-info "安装 xcaddy..."
-go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+info "安装 xcaddy ${XCADDY_VERSION}..."
+go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}"
 XCADDY="$(go env GOPATH)/bin/xcaddy"
 [[ -x "$XCADDY" ]] || XCADDY="/root/go/bin/xcaddy"
+[[ -x "$XCADDY" ]] || die "xcaddy 安装失败"
 
-info "编译定制 Caddy（含 forwardproxy naive 分支，约 3-8 分钟）..."
-BUILD_ARGS=(build)
-[[ -n "$CADDY_PIN" ]] && BUILD_ARGS+=("$CADDY_PIN")
-BUILD_ARGS+=(--with "github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive")
+info "编译定制 Caddy: ${CADDY_PIN} + forwardproxy(naive) ${FORWARDPROXY_PIN}（约 3-8 分钟）..."
+BUILD_ARGS=(build "$CADDY_PIN" --with "github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@${FORWARDPROXY_PIN}")
 TMP_CADDY="$(mktemp -d)/caddy"
-(cd "$(dirname "$TMP_CADDY")" && "$XCADDY" "${BUILD_ARGS[@]}")
-mv "$(dirname "$TMP_CADDY")/caddy" "$TMP_CADDY"
+(cd "$(dirname "$TMP_CADDY")" && "$XCADDY" "${BUILD_ARGS[@]}") \
+  || die "Caddy 编译失败。若刚改了版本组合，请先在本地试编译；也可用 NAIVEPANEL_FORWARDPROXY_PIN=naive 跟随分支 HEAD（需配合未发布的 caddy master）"
+[[ -x "$TMP_CADDY" ]] || die "编译产物缺失: $TMP_CADDY"
+
+# 校验产物：版本号与 forward_proxy 模块都必须对上，避免装了不匹配的二进制
+BUILT_VER="$("$TMP_CADDY" version 2>/dev/null | awk '{print $1}')"
+[[ "$BUILT_VER" == "$CADDY_PIN" ]] || die "编译出的 Caddy 版本为 ${BUILT_VER}，与钉住的 ${CADDY_PIN} 不符"
+"$TMP_CADDY" list-modules | grep -qx 'http.handlers.forward_proxy' \
+  || die "编译产物缺少 http.handlers.forward_proxy 模块"
+ok "产物校验通过: ${BUILT_VER} + http.handlers.forward_proxy"
 
 # 备份官方二进制（仅首次），然后用定制构建直接覆盖官方路径
 [[ -f "${CADDY_BIN}.official" ]] || cp -a "$CADDY_BIN" "${CADDY_BIN}.official"

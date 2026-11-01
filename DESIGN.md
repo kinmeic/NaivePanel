@@ -247,7 +247,7 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 4. Caddy 检测与安装：
    - 已安装：提示用户决策（使用现有 / 重新安装 / 中止）
    - 未安装：官方 apt 仓库安装，启动一次生成默认配置后停止
-5. `go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest`，`~/go/bin/xcaddy build <pin版本> --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive`（Caddy 版本钉住，记录在脚本变量中）
+5. `go install github.com/caddyserver/xcaddy/cmd/xcaddy@<pin版本>`，再 `~/go/bin/xcaddy build <caddy_pin> --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@<forwardproxy_pin>`；go/caddy/xcaddy/forwardproxy 四个版本全部钉在脚本变量中（均可用 `NAIVEPANEL_*` 环境变量临时覆盖），当前组合为 go 1.27.3 + caddy v2.11.7 + forwardproxy naive 分支提交 c096d6a（tag `v2.11.7-naive`）+ xcaddy v0.4.7。编译后强制校验 `caddy version` 与 `http.handlers.forward_proxy` 模块，不符则中止
 6. 备份官方二进制为 `/usr/bin/caddy.official`（仅首次），产物直接覆盖 `/usr/bin/caddy`；`apt-mark hold caddy` 防止 apt 升级回覆盖
 7. 部署面板二进制（优先 repo 内 `make build` 产物；支持 `-r` 从 release 下载）+ naivepanel.service
 8. 调用 `naivepanel hash-password` 生成 Argon2id 哈希，写 `/etc/naivepanel/config.yaml`（0600）

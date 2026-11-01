@@ -59,7 +59,8 @@ sudo bash install.sh
 ```
 
 脚本会：安装 Go → 交互询问域名/面板路径/管理员账号密码 → 检测并安装官方 Caddy →
-xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板并生成初始配置。
+xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy（默认 Caddy v2.11.7 + 该分支已钉提交，
+版本变量与覆盖方式见脚本头部）→ 部署面板并生成初始配置。
 
 安装完成后访问 `https://<域名>/<面板路径>/` 登录（路径仅显示一次，请保存）。
 
@@ -69,11 +70,21 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy → 部署面板�
 
 - **已含 `klzgrad/forwardproxy@naive` 插件**（自行 xcaddy 编译过，或按方式一装过）：全部功能可用
 - **官方原版 Caddy**：静态站 / PHP 站 / 反向代理站均可用；站点一旦启用 forward_proxy，
-  `caddy validate` 会失败并自动回滚。需要代理功能时重编译一个：
+  `caddy validate` 会失败并自动回滚。需要代理功能时重编译一个（版本与 install.sh 钉的一致）：
 
   ```bash
-  xcaddy build v2.10.2 --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive
+  xcaddy build v2.11.7 \
+    --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@v0.0.0-20261006113151-c096d6a00cb2
   ```
+
+  > 版本说明：Caddy 用最新稳定版 **v2.11.7**（已包含迄今全部安全公告的修复，如
+  > CVE-2026-55458 / CVE-2026-52844~52846 / CVE-2026-45692 / CVE-2026-45135 / CVE-2026-30852 等）。
+  > forwardproxy 源为 `klzgrad/forwardproxy` 的 **naive 分支**，钉在上述提交
+  > （= 该仓库 tag `v2.11.7-naive`）：仓库 module path 无 `/v2`，Go 不接受 `@v2.11.7-naive`
+  > 这类 tag，只能用伪版本号；而 naive 分支当前 HEAD 依赖未发布 caddy master 的
+  > `caddyhttp.IdleTimeoutsFromContext`，配合 v2.11.7 会编译失败。
+  > 需要跟随分支时改用 `@naive` 并同时换用 caddy master：
+  > `xcaddy build master --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@naive`。
 
 以下以 Debian/Ubuntu + systemd + amd64 为例（arm64 把 `linux-amd64` 换成 `linux-arm64`），
 把 `example.com`、管理员密码替换为你的实际值：
