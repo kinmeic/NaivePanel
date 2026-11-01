@@ -439,7 +439,7 @@ func (m *Manager) restore(backupDir string) error {
 			if err != nil {
 				continue
 			}
-			if err := os.WriteFile(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()), data, 0600); err != nil {
+			if err := writeSnippet(filepath.Join(m.cfg.Caddy.SitesDir, e.Name()), data); err != nil {
 				return err
 			}
 		}
@@ -501,7 +501,7 @@ func (m *Manager) applyLive(files map[string]string) error {
 			continue
 		}
 		p := filepath.Join(m.cfg.Caddy.SitesDir, filepath.Base(rel))
-		if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+		if err := writeSnippet(p, []byte(content)); err != nil {
 			return err
 		}
 	}

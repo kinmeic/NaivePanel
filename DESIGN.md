@@ -44,7 +44,7 @@ NaivePanel 是一个 Linux 服务器面板应用（Go 单二进制），用于�
 | `/etc/naivepanel/backups/` | Caddy/BypassCore 配置变更前的自动备份（保留最近 20 份） | 0700 |
 | `/usr/bin/caddy` | xcaddy 编译的定制 Caddy，**直接覆盖官方二进制**；原版备份于 `/usr/bin/caddy.official`（仅首次） | 0755 |
 | `/etc/caddy/Caddyfile` | 主配置，`import /etc/caddy/sites/*.caddy` | 0644 |
-| `/etc/caddy/sites/<domain>.caddy` | 面板渲染的站点片段（每站一文件） | 0600 |
+| `/etc/caddy/sites/<domain>.caddy` | 面板渲染的站点片段（每站一文件） | `root:caddy` 0640（无 caddy 组时 0644）——caddy 服务以非 root 运行，片段必须对其可读，否则 import 报 permission denied 启动失败 |
 | `/usr/local/bin/bypasscore` | BypassCore 二进制 | 0755 |
 | `/etc/bypasscore/config.json` | BypassCore 配置 | 0600 |
 | `/etc/bypasscore/geoip.dat` `geosite.dat` | GeoData（BypassCore 工作目录） | 0644 |

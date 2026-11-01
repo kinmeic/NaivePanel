@@ -100,21 +100,45 @@ systemctl enable --now cron >/dev/null 2>&1 || true
 ok "基础依赖就绪"
 
 # ---------- 3. 安装 Go ----------
+fetch_go_sha256() {
+  # 取 Go 官方发布包的 SHA256。
+  # 注意：https://go.dev/dl/<file>.sha256 会返回 HTTP 200 的 HTML（go-import 重定向页），
+  # curl -f 不会报错，必须校验格式；真正的 .sha256 文件由 dl.google.com 提供。
+  local tarball="$1" sha json
+  if sha="$(curl -fsSL --retry 3 --retry-delay 2 "https://dl.google.com/go/${tarball}.sha256" 2>/dev/null)"; then
+    sha="$(printf '%s' "$sha" | tr -d '[:space:]')"
+    [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] && { printf '%s' "$sha"; return 0; }
+  fi
+  # 兜底：解析官方 JSON 清单（不依赖 python3 / jq）：先压平换行，再按对象 "{" 切分，
+  # 使同一发布包的 filename 与 sha256 落在同一行
+  if json="$(curl -fsSL --retry 3 --retry-delay 2 "https://go.dev/dl/?mode=json&include=all" 2>/dev/null)"; then
+    sha="$(printf '%s' "$json" | tr -d '\n\r' | tr '{' '\n' \
+      | grep -F "\"filename\": \"${tarball}\"" \
+      | grep -o '"sha256"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]\{64\}"' | head -n1 | cut -d'"' -f4)"
+    [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] && { printf '%s' "$sha"; return 0; }
+  fi
+  return 1
+}
+
 install_go() {
   info "下载并安装 Go ${GO_VERSION} (${GO_ARCH})..."
   local tarball="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-  curl -fsSL "https://go.dev/dl/${tarball}" -o "/tmp/${tarball}" \
-    || curl -fsSL "https://dl.google.com/go/${tarball}" -o "/tmp/${tarball}"
-  curl -fsSL "https://go.dev/dl/${tarball}.sha256" -o "/tmp/${tarball}.sha256" \
-    || curl -fsSL "https://dl.google.com/go/${tarball}.sha256" -o "/tmp/${tarball}.sha256"
+  local tmp_tar="/tmp/${tarball}"
   local go_sha
-  go_sha="$(tr -d '[:space:]' < "/tmp/${tarball}.sha256")"
-  [[ "$go_sha" =~ ^[0-9a-fA-F]{64}$ ]] || die "Go 下载校验文件格式异常"
-  echo "${go_sha}  /tmp/${tarball}" | sha256sum -c - >/dev/null \
-    || die "Go 下载包 SHA256 校验失败"
+  # 先取校验值再下载，避免白下载；取不到就中止（不跳过校验）
+  go_sha="$(fetch_go_sha256 "$tarball")" \
+    || die "无法获取 Go ${GO_VERSION} 官方 SHA256（网络受限？请检查出网 DNS/代理后重试）"
+  curl -fsSL --retry 3 --retry-delay 2 "https://dl.google.com/go/${tarball}" -o "$tmp_tar" \
+    || curl -fsSL --retry 3 --retry-delay 2 "https://go.dev/dl/${tarball}" -o "$tmp_tar" \
+    || die "Go 安装包下载失败: ${tarball}"
+  [[ -s "$tmp_tar" ]] || die "Go 安装包为空: ${tmp_tar}"
+  echo "${go_sha}  ${tmp_tar}" | sha256sum -c - >/dev/null \
+    || { rm -f "$tmp_tar"; die "Go 下载包 SHA256 校验失败（下载被劫持/镜像不一致？）"; }
+  tar -tzf "$tmp_tar" >/dev/null 2>&1 \
+    || { rm -f "$tmp_tar"; die "Go 安装包已损坏（gzip 校验失败）"; }
   rm -rf /usr/local/go
-  tar -C /usr/local -xzf "/tmp/${tarball}"
-  rm -f "/tmp/${tarball}" "/tmp/${tarball}.sha256"
+  tar -C /usr/local -xzf "$tmp_tar"
+  rm -f "$tmp_tar"
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 }
@@ -177,6 +201,7 @@ ok "Caddy 官方安装完成"
 
 # 以官方包实际安装路径为准（通常为 /usr/bin/caddy）
 CADDY_BIN="$(command -v caddy)"
+[[ -n "$CADDY_BIN" && -x "$CADDY_BIN" ]] || die "未找到 caddy 可执行文件（官方包安装失败？请检查上一步输出）"
 
 # ---------- 5. xcaddy 编译定制 Caddy ----------
 info "安装 xcaddy ${XCADDY_VERSION}..."
@@ -205,10 +230,10 @@ install -m 0755 "$TMP_CADDY" "$CADDY_BIN"
 rm -rf "$(dirname "$TMP_CADDY")"
 ok "定制 Caddy 已覆盖官方二进制 $CADDY_BIN（原版备份于 ${CADDY_BIN}.official）"
 
-# 锁定官方包，防止 apt 升级把定制二进制覆盖回去；清理旧方案的 drop-in（如有）
-apt-mark hold caddy >/dev/null
+# 锁定官方包，防止 apt 升级把定制二进制覆盖回去（caddy 若为二进制自装、非 apt 包则跳过）；清理旧方案的 drop-in（如有）
+apt-mark hold caddy >/dev/null 2>&1 || warn "apt-mark hold 失败（caddy 可能不是 apt 包），请自行确保持续使用定制二进制"
 rm -f /etc/systemd/system/caddy.service.d/naivepanel.conf
-systemctl daemon-reload
+systemctl daemon-reload >/dev/null 2>&1 || true
 ok "caddy.service 沿用官方 unit，二进制已是定制版（apt-mark hold 已锁定官方包）"
 
 # ---------- 6. 部署面板 ----------
@@ -304,15 +329,47 @@ cat > "$CADDY_SITES_DIR/$DOMAIN.caddy" <<EOF
 	file_server
 }
 EOF
-chmod 600 "$CADDY_SITES_DIR/$DOMAIN.caddy"
+chmod 644 /etc/caddy/Caddyfile
+chmod 755 "$CADDY_SITES_DIR"
+
+# 站点片段权限要和 caddy 服务进程的运行身份匹配（Debian/Ubuntu 官方 unit 是 User=caddy）：
+# 0600 root:root 会让 caddy 在 import 时 permission denied 直接启动失败，
+# 而下面以 root 跑的 validate 却依然通过，所以这里显式给 root:caddy 0640。
+CADDY_SVC_USER="$(systemctl show caddy -p User --value 2>/dev/null || true)"
+if [[ -z "$CADDY_SVC_USER" || "$CADDY_SVC_USER" == "root" ]]; then
+  chmod 644 "$CADDY_SITES_DIR/$DOMAIN.caddy"
+else
+  chown root:"$CADDY_SVC_USER" "$CADDY_SITES_DIR/$DOMAIN.caddy" 2>/dev/null \
+    && chmod 640 "$CADDY_SITES_DIR/$DOMAIN.caddy" \
+    || chmod 644 "$CADDY_SITES_DIR/$DOMAIN.caddy"
+fi
+ok "站点片段权限: $(stat -c '%U:%G %a' "$CADDY_SITES_DIR/$DOMAIN.caddy")（caddy 服务用户: ${CADDY_SVC_USER:-root}）"
+
+# 关键：以 caddy 服务用户身份再校验一次。root 能读不代表 caddy 能读，
+# 只以 root 校验会漏掉权限问题，直到 systemd 启动失败才暴露。
+validate_as_caddy_user() {
+  local user="${CADDY_SVC_USER:-root}"
+  [[ "$user" == "root" ]] && return 0
+  command -v runuser >/dev/null || command -v su >/dev/null || return 0
+  if command -v runuser >/dev/null; then
+    runuser -u "$user" -- "$CADDY_BIN" validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  else
+    su -s /bin/sh "$user" -c "'$CADDY_BIN' validate --config /etc/caddy/Caddyfile --adapter caddyfile"
+  fi
+}
 
 "$CADDY_BIN" validate --config /etc/caddy/Caddyfile --adapter caddyfile \
   || die "初始 Caddy 配置校验失败，请检查 $CADDY_SITES_DIR/$DOMAIN.caddy"
+validate_as_caddy_user \
+  || die "以 caddy 服务用户（${CADDY_SVC_USER}）校验失败：多半是 $CADDY_SITES_DIR 下片段/目录权限不足"
 
 systemctl restart caddy
 systemctl restart naivepanel
 sleep 2
-systemctl is-active --quiet caddy || die "caddy 启动失败: journalctl -u caddy"
+if ! systemctl is-active --quiet caddy; then
+  journalctl -u caddy --no-pager -n 20 || true
+  die "caddy 启动失败: journalctl -xeu caddy"
+fi
 systemctl is-active --quiet naivepanel || die "naivepanel 启动失败: journalctl -u naivepanel"
 
 # ---------- 10. 清理临时 swap ----------
