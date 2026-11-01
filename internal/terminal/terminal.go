@@ -3,6 +3,12 @@
 // panel's authenticated reverse proxy under base_path/terminal/ui. It runs
 // the system `login` program, so after the panel session gate users still
 // authenticate with OS credentials before getting a shell.
+//
+// login(1) from util-linux calls vhangup(2) on the pty it was started on.
+// ttyd's libuv read loop treats the resulting transient EIO as EOF and stops
+// reading forever, which shows up as a blank terminal without the login
+// prompt. Wrapping login in util-linux `script` gives it a nested pty, so the
+// hangup hits the inner pty while ttyd keeps a healthy read side.
 package terminal
 
 import (
@@ -18,11 +24,13 @@ import (
 	"time"
 
 	"github.com/kinmeic/NaivePanel/internal/config"
+	"github.com/kinmeic/NaivePanel/internal/sysd"
 )
 
 const (
 	repoAPI     = "https://api.github.com/repos/tsl0922/ttyd/releases/latest"
 	serviceUnit = "ttyd"
+	unitPath    = "/etc/systemd/system/ttyd.service"
 )
 
 var httpClient = &http.Client{Timeout: 120 * time.Second}
@@ -82,6 +90,16 @@ func assetName(goarch string) (string, error) {
 	return "", fmt.Errorf("ttyd 没有适配 %s 架构的预编译二进制", goarch)
 }
 
+// checkDeps verifies the programs the unit's command line relies on.
+func checkDeps() error {
+	for _, name := range []string{"script", "login"} {
+		if _, err := exec.LookPath(name); err != nil {
+			return fmt.Errorf("缺少 %s 命令（Debian/Ubuntu 的 util-linux/bsdutils），无法承载终端登录: %w", name, err)
+		}
+	}
+	return nil
+}
+
 // Install downloads the latest ttyd release binary and (re)installs the
 // systemd unit. basePath is the panel base path so ttyd can serve under
 // basePath/terminal/ui behind the panel's reverse proxy. Returns the
@@ -89,6 +107,9 @@ func assetName(goarch string) (string, error) {
 func (m *Manager) Install(mirror, basePath string) (string, error) {
 	want, err := assetName(runtime.GOARCH)
 	if err != nil {
+		return "", err
+	}
+	if err := checkDeps(); err != nil {
 		return "", err
 	}
 	rel, err := latestRelease(mirror)
@@ -195,7 +216,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s -i 127.0.0.1 -p %d -W -b %s login
+ExecStart=%s -i 127.0.0.1 -p %d -W -b %s script -qefc "exec login" /dev/null
 Restart=on-failure
 RestartSec=3
 
@@ -206,6 +227,15 @@ WantedBy=multi-user.target
 // unitContent renders the systemd unit for ttyd. basePath is the panel base
 // path; ttyd serves under basePath/terminal/ui so the panel reverse proxy
 // can forward requests unchanged.
+//
+// login runs under `script` on purpose: script allocates a nested pty, so
+// login's vhangup() cannot break ttyd's pty read side (see package comment).
+// -q keeps script quiet, -e propagates login's exit status, -f flushes every
+// write so the "login:" prompt (no trailing newline) is shown immediately.
+// The command must be `exec login`: script runs -c through /bin/sh, and a
+// plain `login` leaves it as a child of the shell, where login's setpgrp()
+// moves it to a background process group and SIGTTIN stops it. `exec` replaces
+// the shell, keeping login the session/pgrp leader with a foreground tty.
 func (m *Manager) unitContent(basePath string) string {
 	return fmt.Sprintf(unitTemplate, m.cfg.Terminal.BinPath, m.cfg.Terminal.Port,
 		strings.TrimSuffix(basePath, "/")+"/terminal/ui")
@@ -213,12 +243,36 @@ func (m *Manager) unitContent(basePath string) string {
 
 // WriteUnit installs the systemd unit for ttyd.
 func (m *Manager) WriteUnit(basePath string) error {
-	if err := os.WriteFile("/etc/systemd/system/ttyd.service", []byte(m.unitContent(basePath)), 0644); err != nil {
+	if err := os.WriteFile(unitPath, []byte(m.unitContent(basePath)), 0644); err != nil {
 		return err
 	}
 	out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("systemctl daemon-reload: %v: %s", err, out)
+	}
+	return nil
+}
+
+// EnsureUnit rewrites the ttyd unit when its command line is stale (for
+// example after a panel upgrade switched to the script-wrapped login) and
+// restarts the unit if it is running, so the fix applies without a manual
+// reinstall. A missing unit is left alone: Install creates it.
+func (m *Manager) EnsureUnit(basePath string) error {
+	if !m.Installed() {
+		return nil
+	}
+	cur, err := os.ReadFile(unitPath)
+	if err != nil {
+		return nil
+	}
+	if string(cur) == m.unitContent(basePath) {
+		return nil
+	}
+	if err := m.WriteUnit(basePath); err != nil {
+		return err
+	}
+	if sysd.IsActive(serviceUnit) {
+		return sysd.Action("restart", serviceUnit)
 	}
 	return nil
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/selfupdate"
 	"github.com/kinmeic/NaivePanel/internal/service"
+	"github.com/kinmeic/NaivePanel/internal/terminal"
 	"github.com/kinmeic/NaivePanel/internal/web"
 )
 
@@ -50,6 +51,13 @@ func main() {
 	}
 	if err := cfg.EnsureDirs(); err != nil {
 		log.Fatalf("创建目录失败: %v", err)
+	}
+
+	// Older installs ran `login` directly under ttyd, which util-linux login
+	// breaks by calling vhangup(); reconcile the unit so the terminal shows
+	// the login prompt again after upgrading the panel.
+	if err := terminal.New(cfg).EnsureUnit(cfg.BasePath); err != nil {
+		log.Printf("更新 ttyd 终端配置失败: %v", err)
 	}
 
 	srv, err := web.New(cfg, version)

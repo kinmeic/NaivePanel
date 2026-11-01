@@ -233,6 +233,7 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 ### 8.5 Web 终端（ttyd）
 
 - 「终端」页通过 ttyd 提供系统终端。ttyd 运行系统 `login` 程序，进入后仍需输入系统账号密码（双道门：面板会话 + OS 登录）。ttyd 只监听 `127.0.0.1:7681`（`terminal.port` 可改），不暴露公网
+- `login` 由 util-linux `script -qefc "exec login" /dev/null` 包裹：util-linux 的 login 会调用 `vhangup(2)`，导致 ttyd 的 libuv pty 读端收到一次 EIO 后永久停读，浏览器端表现为黑屏/看不到 `login:` 提示符；`script` 分配嵌套 pty 吸收该 hangup，`-f` 保证无换行的提示符立即刷新。内部命令必须写成 `exec login`：`script -c` 经 `/bin/sh` 执行，若保留 shell 父进程，login 的 `setpgrp()` 会把自己放进后台进程组并因 SIGTTIN 停止。面板启动时若发现 ttyd 单元仍是旧命令，会自动重写并在服务运行时重启一次
 - 面板将 `base_path/terminal/ui/*` 反代到 ttyd（路径原样转发，ttyd 以 `-b <base_path>/terminal/ui` 运行），HTTP 与 WebSocket 升级均由 `httputil.ReverseProxy` 处理；该路由与其他面板路由一样走会话认证，即「需要登录」由面板会话保证
 - 一键安装：GitHub API 查询 `tsl0922/ttyd` 最新 release，按架构下载静态二进制（`ttyd.{x86_64,aarch64,armhf,i686}`，支持镜像前缀），原子落盘 `/usr/local/bin/ttyd`，`--version` 自检（官方 release 无校验文件，自检兜底），写入 `ttyd.service` 并 enable + restart
 - 反代路径豁免面板自身的严格 CSP 与 `X-Frame-Options: DENY`（ttyd SPA 含内联引导脚本且需要被终端页 iframe 嵌入），其余页面安全头不变
