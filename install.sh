@@ -260,8 +260,6 @@ while true; do
   break
 done
 
-read -rp "Go 模块代理 [${GOPROXY_DEFAULT}]: " GOPROXY
-GOPROXY="${GOPROXY:-$GOPROXY_DEFAULT}"
 ok "配置确认: 域名=$DOMAIN 路径=$BASE_PATH 账号=$ADMIN_USER"
 
 # ---------- 2. 基础依赖 ----------
@@ -287,7 +285,7 @@ fi
 systemctl enable --now cron >/dev/null 2>&1 || true
 ok "基础依赖就绪"
 
-# ---------- 3. 安装 Go ----------
+# ---------- 3. Go 安装辅助函数 ----------
 fetch_go_sha256() {
   # 取 Go 官方发布包的 SHA256。
   # 注意：https://go.dev/dl/<file>.sha256 会返回 HTTP 200 的 HTML（go-import 重定向页），
@@ -330,19 +328,6 @@ install_go() {
   ln -sf /usr/local/go/bin/go /usr/local/bin/go
   ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 }
-CURRENT_GO=""
-if command -v go >/dev/null; then
-  CURRENT_GO="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
-fi
-if [[ -n "$CURRENT_GO" && "$(printf '%s\n' "$GO_VERSION" "$CURRENT_GO" | sort -V | head -n1)" == "$GO_VERSION" ]]; then
-  ok "Go 已安装: $(go version | awk '{print $3}')"
-else
-  install_go
-  ok "Go 安装完成: $(go version | awk '{print $3}')"
-fi
-export GOPROXY
-export PATH="$PATH:/usr/local/go/bin:/root/go/bin"
-
 # ---------- 4. Caddy 检测与安装 ----------
 # CADDY_FOUND: 是否已装 caddy；CADDY_HAS_FP: 其是否已含 forward_proxy 模块
 CADDY_FOUND=0
@@ -406,6 +391,45 @@ if [[ "$CADDY_DECISION" == "skip" ]] && ! systemctl cat caddy >/dev/null 2>&1; t
     1) CADDY_DECISION=1 ;;
     *) die "现有 Caddy 无 systemd 服务单元，无法继续" ;;
   esac
+fi
+
+# ---------- 安装选项：面板二进制来源与 Go 环境 ----------
+PANEL_INSTALL_METHOD="${NAIVEPANEL_INSTALL_METHOD:-}"
+if [[ -z "$PANEL_INSTALL_METHOD" ]]; then
+  echo "NaivePanel 安装方式："
+  echo "  1) 从当前仓库源码构建（默认）"
+  echo "  2) 下载 GitHub 最新 Release 的预编译二进制"
+  read -rp "请选择 [1]: " PANEL_INSTALL_METHOD
+  PANEL_INSTALL_METHOD="${PANEL_INSTALL_METHOD:-1}"
+fi
+case "$PANEL_INSTALL_METHOD" in
+  1|source) PANEL_INSTALL_METHOD=source ;;
+  2|release) PANEL_INSTALL_METHOD=release ;;
+  *) die "无效的面板安装方式: $PANEL_INSTALL_METHOD（请选 source 或 release）" ;;
+esac
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$PANEL_INSTALL_METHOD" == "source" && ! -f "${SCRIPT_DIR}/go.mod" ]]; then
+  die "未找到面板源码（请在 NaivePanel 仓库根目录运行脚本，或选择下载 GitHub Release）"
+fi
+
+# 只有源码构建面板或编译定制 Caddy 时才需要 Go。
+if [[ "$PANEL_INSTALL_METHOD" == "source" || "$CADDY_DECISION" != "skip" ]]; then
+  read -rp "Go 模块代理 [${GOPROXY_DEFAULT}]: " GOPROXY
+  GOPROXY="${GOPROXY:-$GOPROXY_DEFAULT}"
+  CURRENT_GO=""
+  if command -v go >/dev/null; then
+    CURRENT_GO="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
+  fi
+  if [[ -n "$CURRENT_GO" && "$(printf '%s\n' "$GO_VERSION" "$CURRENT_GO" | sort -V | head -n1)" == "$GO_VERSION" ]]; then
+    ok "Go 已安装: $(go version | awk '{print $3}')"
+  else
+    install_go
+    ok "Go 安装完成: $(go version | awk '{print $3}')"
+  fi
+  export GOPROXY
+  export PATH="$PATH:/usr/local/go/bin:/root/go/bin"
+else
+  info "将下载预编译面板并沿用现有 Caddy，跳过 Go 安装"
 fi
 
 case "$CADDY_DECISION" in
@@ -500,14 +524,74 @@ else
 fi
 
 # ---------- 6. 部署面板 ----------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "${SCRIPT_DIR}/go.mod" ]]; then
-  info "从源码构建面板..."
-  (cd "$SCRIPT_DIR" && go build -trimpath -ldflags="-s -w -X main.version=$(date +%Y%m%d)" -o "$PANEL_BIN" ./cmd/naivepanel)
+# Release 下载和后续配置编辑共用临时目录，退出时自动清理。
+INSTALL_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$INSTALL_TMP_DIR"' EXIT
+
+install_release_binary() {
+  local tag="${NAIVEPANEL_RELEASE_TAG:-}" latest_url asset base_url release_dir archive checksum archive_listing binary_version staged_bin
+  if [[ -z "$tag" ]]; then
+    latest_url="$(curl -fsSL --retry 3 --retry-delay 2 -o /dev/null -w '%{url_effective}' \
+      "https://github.com/kinmeic/NaivePanel/releases/latest")" \
+      || die "无法查询 GitHub 最新 Release（请检查网络或设置 NAIVEPANEL_RELEASE_TAG）"
+    [[ "$latest_url" =~ ^https://github\.com/kinmeic/NaivePanel/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9][A-Za-z0-9.-]*)?)$ ]] \
+      || die "无法从 GitHub 最新 Release 地址解析版本号: $latest_url"
+    tag="${BASH_REMATCH[1]}"
+  fi
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9][A-Za-z0-9.-]*)?$ ]] \
+    || die "Release tag 格式无效: $tag"
+
+  asset="naivepanel-linux-${ARCH}.tar.gz"
+  base_url="https://github.com/kinmeic/NaivePanel/releases/download/${tag}"
+  release_dir="${INSTALL_TMP_DIR}/release"
+  mkdir -p "$release_dir"
+  archive="${release_dir}/${asset}"
+
+  info "下载 NaivePanel ${tag} 预编译包 (${ARCH})..."
+  curl -fsSL --retry 3 --retry-delay 2 "${base_url}/${asset}" -o "$archive" \
+    || die "Release 预编译包下载失败: ${asset}"
+  curl -fsSL --retry 3 --retry-delay 2 "${base_url}/SHA256SUMS" -o "${release_dir}/SHA256SUMS" \
+    || die "Release SHA256SUMS 下载失败"
+  checksum="$(awk -v asset="$asset" '$2 == asset || $2 == "*" asset { print $1 }' "${release_dir}/SHA256SUMS")"
+  [[ "$checksum" =~ ^[a-fA-F0-9]{64}$ ]] || die "SHA256SUMS 中缺少 ${asset} 的唯一有效校验值"
+  printf '%s  %s\n' "$checksum" "$archive" | sha256sum -c - \
+    || die "Release 预编译包 SHA256 校验失败"
+
+  archive_listing="${release_dir}/archive.list"
+  tar -tvzf "$archive" > "$archive_listing" \
+    || die "Release 预编译包无法读取"
+  [[ "$(wc -l < "$archive_listing")" -eq 1 \
+    && "$(cut -c1 "$archive_listing")" == "-" \
+    && "$(awk '{print $NF}' "$archive_listing")" == "naivepanel" ]] \
+    || die "Release 压缩包内容异常（只接受 naivepanel 单一普通文件）"
+  tar -xzf "$archive" -C "$release_dir" \
+    || die "Release 预编译包解压失败"
+  [[ -f "${release_dir}/naivepanel" && ! -L "${release_dir}/naivepanel" ]] \
+    || die "Release 压缩包中没有 naivepanel 普通文件"
+  chmod 0755 "${release_dir}/naivepanel"
+  binary_version="$("${release_dir}/naivepanel" version 2>/dev/null)" \
+    || die "Release 面板二进制自检失败"
+  [[ "$binary_version" == "naivepanel ${tag}" ]] \
+    || die "Release 面板版本自检不匹配：期望 naivepanel ${tag}，实际 ${binary_version}"
+
+  staged_bin="$(mktemp "${PANEL_BIN}.tmp.XXXXXX")" \
+    || die "无法在 ${PANEL_BIN} 所在目录创建临时安装文件"
+  install -m 0755 "${release_dir}/naivepanel" "$staged_bin"
+  mv -f "$staged_bin" "$PANEL_BIN"
+  ok "已安装 GitHub Release 面板: ${binary_version}（SHA256 校验通过）"
+}
+
+if [[ "$PANEL_INSTALL_METHOD" == "source" ]]; then
+  if [[ -f "${SCRIPT_DIR}/go.mod" ]]; then
+    info "从源码构建面板..."
+    (cd "$SCRIPT_DIR" && go build -trimpath -ldflags="-s -w -X main.version=$(date +%Y%m%d)" -o "$PANEL_BIN" ./cmd/naivepanel)
+  else
+    die "未找到面板源码（请在 NaivePanel 仓库根目录运行脚本，或选择下载 GitHub Release）"
+  fi
+  ok "面板二进制: $PANEL_BIN"
 else
-  die "未找到面板源码（请在 NaivePanel 仓库根目录运行本脚本）"
+  install_release_binary
 fi
-ok "面板二进制: $PANEL_BIN"
 
 # ---------- 7. 生成面板配置 ----------
 mkdir -p "$PANEL_CONFIG_DIR" "$CADDY_SITES_DIR"
@@ -528,8 +612,6 @@ fi
 
 # If the panel host already has a site block, preserve it and prepare the
 # merged block for raw_mode so a later panel Apply keeps the operator's routes.
-INSTALL_TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$INSTALL_TMP_DIR"' EXIT
 PANEL_SITE_SOURCE=""
 PANEL_SITE_RAW_FILE=""
 PANEL_SITE_MERGED_FILE=""

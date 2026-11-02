@@ -58,9 +58,11 @@ RHEL 系列需具备可用的 EPEL 软件源。其他发行版可按官方说明
 sudo bash install.sh
 ```
 
-脚本会：安装 Go → 交互询问域名/面板路径/管理员账号密码 → 检测并安装官方 Caddy →
+脚本会交互询问域名/面板路径/管理员账号密码，以及面板二进制来源（当前源码构建或下载 GitHub
+最新 Release；下载时会校验 `SHA256SUMS` 并检查二进制版本）。随后检测并安装官方 Caddy，按需用
 xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy（默认 Caddy v2.11.7 + 该分支已钉提交，
-版本变量与覆盖方式见脚本头部）→ 部署面板并生成初始配置。
+版本变量与覆盖方式见脚本头部），最后部署面板并生成初始配置。只有构建面板源码或编译定制 Caddy
+时才安装 Go；选择预编译面板并沿用已有 Caddy 时会跳过 Go 安装。
 
 安装完成后访问 `https://<域名>/<面板路径>/` 登录（路径仅显示一次，请保存）。
 
@@ -91,7 +93,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy（默认 Caddy v2.
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.5.3
+VER=v0.5.4
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"
