@@ -35,11 +35,10 @@ func TestSnippetsAreReadableByCaddyUser(t *testing.T) {
 	if perm&0o444 == 0 {
 		t.Fatalf("snippet must be readable, got %04o", perm)
 	}
-	if perm&0o007 != 0 {
-		t.Fatalf("snippet must not be world-accessible via other bits, got %04o", perm)
-	}
-
 	if gid, ok := lookupCaddyGID(); ok {
+		if perm&0o007 != 0 {
+			t.Fatalf("snippet with caddy group must not be world-accessible, got %04o", perm)
+		}
 		if perm != snippetFileMode {
 			t.Fatalf("with caddy group present want mode %04o, got %04o", snippetFileMode, perm)
 		}

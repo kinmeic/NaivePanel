@@ -23,9 +23,10 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		bypassVersion = s.Bypass.VersionTag()
 	}
 	data := map[string]any{
-		"Version":    s.Version,
-		"AutoUpdate": s.Cfg.SelfUpdateEnabled(),
-		"Geo":        s.Cfg.GeoSnapshot(),
+		"Version":     s.Version,
+		"ServerAlias": s.Cfg.GetServerAlias(),
+		"AutoUpdate":  s.Cfg.SelfUpdateEnabled(),
+		"Geo":         s.Cfg.GeoSnapshot(),
 		"Bypass": map[string]any{
 			"Installed":  bypassInstalled,
 			"Version":    bypassVersion,
@@ -36,14 +37,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings", "应用管理", data)
 }
 
+func (s *Server) handleServerAlias(w http.ResponseWriter, r *http.Request) {
+	if err := s.Cfg.SetServerAlias(r.FormValue("server_alias")); err != nil {
+		s.setFlash(w, "保存服务器别名失败: "+err.Error())
+	} else {
+		s.setFlash(w, "服务器别名已保存")
+	}
+	s.redirect(w, r, "/settings")
+}
+
 // handleSecurity shows password and MFA controls.
 func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "security", "账号安全", s.securityData(r))
+}
+
+func (s *Server) securityData(r *http.Request) map[string]any {
 	totpOn, _ := s.Cfg.TOTPState()
 	data := map[string]any{
 		"TOTPEnabled":    totpOn,
 		"RecoveryLeft":   s.Cfg.RecoveryCount(),
 		"PendingTOTPQR":  "",
 		"PendingTOTPSet": false,
+		"Fail2ban":       s.Fail2ban.Snapshot(),
 	}
 	if sess := s.session(r); sess != nil {
 		if secret, otpauthURL := sess.PendingTOTP(); secret != "" {
@@ -55,7 +70,20 @@ func (s *Server) handleSecurity(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.render(w, r, "security", "账号安全", data)
+	rules, err := s.Fail2ban.ReadRules()
+	data["Fail2banRules"] = rules
+	if err != nil {
+		data["Fail2banRulesError"] = "读取规则失败: " + err.Error()
+	}
+	data["Fail2banRulesReadable"] = err == nil
+	s.serviceOpsMu.Lock()
+	if id := s.activeServiceOps["fail2ban"]; id != "" {
+		if operation := s.serviceOps[id]; operation != nil {
+			data["Fail2banPending"] = operation.Message
+		}
+	}
+	s.serviceOpsMu.Unlock()
+	return data
 }
 
 // totpQR renders the otpauth URL as a PNG data URI.

@@ -44,6 +44,12 @@ func newServiceOperationID() (string, error) {
 // beginServiceRestart starts at most one restart per unit. A duplicate request
 // made while the first is pending/running receives the original operation ID.
 func (s *Server) beginServiceRestart(unit, label string, delay time.Duration) (*serviceOperation, bool, error) {
+	return s.beginServiceWork(unit, "重启请求已提交，正在等待安全执行", func(id string) {
+		s.runServiceRestart(id, unit, label, delay)
+	})
+}
+
+func (s *Server) beginServiceWork(unit, message string, work func(string)) (*serviceOperation, bool, error) {
 	now := time.Now()
 	s.serviceOpsMu.Lock()
 	s.pruneServiceOperationsLocked(now)
@@ -64,7 +70,7 @@ func (s *Server) beginServiceRestart(unit, label string, delay time.Duration) (*
 		ID:        id,
 		Service:   unit,
 		State:     "queued",
-		Message:   "重启请求已提交，正在等待安全执行",
+		Message:   message,
 		StartedAt: now,
 		UpdatedAt: now,
 	}
@@ -73,7 +79,7 @@ func (s *Server) beginServiceRestart(unit, label string, delay time.Duration) (*
 	snapshot := *operation
 	s.serviceOpsMu.Unlock()
 
-	go s.runServiceRestart(id, unit, label, delay)
+	go work(id)
 	return &snapshot, true, nil
 }
 

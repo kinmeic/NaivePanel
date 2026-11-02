@@ -171,11 +171,12 @@
   document.addEventListener("submit", function (e) {
     if (e.defaultPrevented) return;
     var submitter = e.submitter;
-    if (!submitter || !submitter.hasAttribute("data-async-restart")) return;
+    if (!submitter || (!submitter.hasAttribute("data-async-restart") && !submitter.hasAttribute("data-async-operation"))) return;
     e.preventDefault();
 
     var form = e.target;
     var label = submitter.getAttribute("data-service-label") || "服务";
+    var operationName = submitter.getAttribute("data-operation-name") || "重启";
     var returnURL = submitter.getAttribute("data-return-url") || window.location.pathname;
     var progress = document.getElementById(submitter.getAttribute("data-progress-target"));
     if (!progress || form.dataset.operationPending === "1") return;
@@ -185,8 +186,11 @@
     var message = progress.querySelector("[data-operation-message]");
     var bar = progress.querySelector("[data-operation-bar]");
     var spinner = progress.querySelector(".spinner");
-    var stateWidths = { queued: 25, restarting: 60, checking: 85, succeeded: 100, failed: 100 };
-    var deadline = Date.now() + 90000;
+    var controls = Array.from(form.querySelectorAll("button")).map(function (button) {
+      return { button: button, disabled: button.disabled };
+    });
+    var stateWidths = { queued: 25, running: 60, restarting: 60, checking: 85, succeeded: 100, failed: 100 };
+    var deadline = Date.now() + (operationName === "安装" ? 600000 : 90000);
 
     function renderOperation(operation) {
       var state = operation.state || "queued";
@@ -194,8 +198,8 @@
       if (state === "succeeded") progress.classList.add("operation-success");
       if (state === "failed") progress.classList.add("operation-failed");
       if (title) {
-        title.textContent = state === "succeeded" ? label + " 重启完成" :
-          state === "failed" ? label + " 重启失败" : "正在重启 " + label;
+        title.textContent = state === "succeeded" ? label + " " + operationName + "完成" :
+          state === "failed" ? label + " " + operationName + "失败" : "正在" + operationName + " " + label;
       }
       if (message) message.textContent = operation.message || "正在处理…";
       if (bar) bar.style.width = (stateWidths[state] || 15) + "%";
@@ -204,8 +208,8 @@
 
     function restoreControls() {
       form.dataset.operationPending = "0";
-      form.querySelectorAll("button").forEach(function (button) {
-        button.disabled = false;
+      controls.forEach(function (control) {
+        control.button.disabled = control.disabled;
       });
     }
 
@@ -249,7 +253,7 @@
     }
 
     progress.classList.remove("hidden");
-    renderOperation({ state: "queued", message: "正在提交重启请求…" });
+    renderOperation({ state: "queued", message: "正在提交" + operationName + "请求…" });
     form.querySelectorAll("button").forEach(function (button) {
       button.disabled = true;
     });
@@ -274,6 +278,11 @@
       renderOperation(operation);
       poll(operation.status_url);
     }).catch(function (error) {
+      if (submitter.hasAttribute("data-async-operation")) {
+        renderOperation({ state: "failed", done: true, message: error.message + "。请刷新页面确认操作状态后再重试。" });
+        restoreControls();
+        return;
+      }
       // Never automatically repeat a restart POST: it may already have reached
       // the server before Caddy closed the connection.
       renderOperation({

@@ -81,6 +81,18 @@ func TestValidateMirror(t *testing.T) {
 	}
 }
 
+func TestServerAliasSaveFailureRestoresMemory(t *testing.T) {
+	c := validConfig(t)
+	c.ServerAlias = "original"
+	c.path = t.TempDir() // Renaming a file over a directory must fail.
+	if err := c.SetServerAlias("new"); err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if c.GetServerAlias() != "original" {
+		t.Fatal("failed save changed in-memory alias")
+	}
+}
+
 func TestLoadMigratesLegacyCaddyBin(t *testing.T) {
 	root := t.TempDir()
 	binDir := filepath.Join(root, "bin")

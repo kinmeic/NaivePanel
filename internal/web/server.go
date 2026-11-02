@@ -21,6 +21,7 @@ import (
 	"github.com/kinmeic/NaivePanel/internal/caddymgr"
 	"github.com/kinmeic/NaivePanel/internal/config"
 	"github.com/kinmeic/NaivePanel/internal/cronmgr"
+	"github.com/kinmeic/NaivePanel/internal/fail2ban"
 	"github.com/kinmeic/NaivePanel/internal/sites"
 	"github.com/kinmeic/NaivePanel/internal/sysd"
 	"github.com/kinmeic/NaivePanel/internal/systemstats"
@@ -37,6 +38,7 @@ type Server struct {
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
 	WARP     warpService
+	Fail2ban fail2banService
 	Cron     *cronmgr.Manager
 	Stats    *systemstats.Sampler
 	Terminal *terminal.Manager
@@ -51,7 +53,7 @@ type Server struct {
 	// rollback pipeline as one transaction across concurrent admin requests.
 	caddyMu sync.Mutex
 
-	// serviceOps tracks asynchronous restarts. Caddy carries the panel's own
+	// serviceOps tracks asynchronous service work. Caddy carries the panel's own
 	// HTTP connection, so its restart must begin only after the response has
 	// reached the browser. Keeping the operation server-side also lets repeated
 	// clicks attach to the same restart instead of issuing another one.
@@ -84,6 +86,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		Caddy:            caddymgr.New(cfg),
 		Bypass:           bypasscore.New(cfg),
 		WARP:             warp.New(),
+		Fail2ban:         fail2ban.New(),
 		Cron:             cron,
 		Stats:            systemstats.New(),
 		Terminal:         terminal.New(cfg),
@@ -222,9 +225,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/geo/settings", s.protect(s.handleUpdateSettings))
 
 	s.mux.HandleFunc("GET "+bp+"/settings", s.protect(s.handleSettings))
+	s.mux.HandleFunc("POST "+bp+"/settings/server-alias", s.protect(s.handleServerAlias))
 	s.mux.HandleFunc("POST "+bp+"/settings/update", s.protect(s.handleUpdateSettings))
 	s.mux.HandleFunc("POST "+bp+"/settings/geo", s.protect(s.handleUpdateSettings))
 	s.mux.HandleFunc("GET "+bp+"/security", s.protect(s.handleSecurity))
+	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/install", s.protect(s.handleFail2banInstall))
+	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/service", s.protect(s.handleFail2banService))
+	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/rules", s.protect(s.handleFail2banRules))
 	s.mux.HandleFunc("POST "+bp+"/security/password", s.protect(s.handlePasswordChange))
 	s.mux.HandleFunc("POST "+bp+"/security/totp/setup", s.protect(s.handleTOTPSetup))
 	s.mux.HandleFunc("POST "+bp+"/security/totp/confirm", s.protect(s.handleTOTPConfirm))

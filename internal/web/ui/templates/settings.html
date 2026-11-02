@@ -50,6 +50,16 @@
   </div>
 
   <div class="card">
+    <h3>{{icon "server"}}服务器别名</h3>
+    <form method="post" action="{{.Base}}/settings/server-alias">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>别名<input name="server_alias" value="{{.Data.ServerAlias}}" maxlength="80" placeholder="例如：上海主服务器"></label>
+      <p class="muted">保存后显示在概览的系统信息中，位于主机名下方。留空可清除，不修改系统主机名。</p>
+      <button type="submit" class="btn">{{icon "save"}}保存别名</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h3>{{icon "settings-2"}}更新设置</h3>
     <form method="post" action="{{.Base}}/settings/update">
       <input type="hidden" name="_csrf" value="{{.CSRF}}">

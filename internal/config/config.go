@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/kinmeic/NaivePanel/internal/sites"
 	"gopkg.in/yaml.v3"
@@ -76,6 +78,7 @@ type Config struct {
 	Domain          string   `yaml:"domain"`
 	BasePath        string   `yaml:"base_path"`
 	AdminUser       string   `yaml:"admin_user"`
+	ServerAlias     string   `yaml:"server_alias,omitempty"`
 	AdminPassHash   string   `yaml:"admin_pass_hash"`
 	TOTPEnabled     bool     `yaml:"totp_enabled"`
 	TOTPSecret      string   `yaml:"totp_secret"`
@@ -170,6 +173,9 @@ func (c *Config) SetDefaults() {
 
 // Validate checks the minimum viable configuration.
 func (c *Config) Validate() error {
+	if err := ValidateServerAlias(c.ServerAlias); err != nil {
+		return err
+	}
 	if err := (&sites.Site{Domain: c.Domain, RawMode: true, Raw: "validation"}).Validate(); err != nil {
 		return fmt.Errorf("domain: %w", err)
 	}
@@ -229,6 +235,42 @@ func (c *Config) Validate() error {
 		c.HostSite = c.Domain
 	} else if err := (&sites.Site{Domain: c.HostSite, RawMode: true, Raw: "validation"}).Validate(); err != nil {
 		return fmt.Errorf("host_site: %w", err)
+	}
+	return nil
+}
+
+// ValidateServerAlias bounds the display name without changing the OS hostname.
+func ValidateServerAlias(alias string) error {
+	if !utf8.ValidString(alias) || utf8.RuneCountInString(alias) > 80 {
+		return errors.New("服务器别名最多 80 个字符")
+	}
+	for _, r := range alias {
+		if unicode.IsControl(r) {
+			return errors.New("服务器别名不能包含控制字符")
+		}
+	}
+	return nil
+}
+
+func (c *Config) GetServerAlias() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ServerAlias
+}
+
+// SetServerAlias keeps memory and disk consistent even when saving fails.
+func (c *Config) SetServerAlias(alias string) error {
+	alias = strings.TrimSpace(alias)
+	if err := ValidateServerAlias(alias); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	previous := c.ServerAlias
+	c.ServerAlias = alias
+	if err := c.saveLocked(); err != nil {
+		c.ServerAlias = previous
+		return err
 	}
 	return nil
 }

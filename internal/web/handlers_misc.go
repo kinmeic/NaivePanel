@@ -22,6 +22,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	pubV4, pubV6 := sysinfo.PublicIPs()
 	data := map[string]any{
 		"Host":          host,
+		"ServerAlias":   s.Cfg.GetServerAlias(),
 		"PublicIPv4":    pubV4,
 		"PublicIPv6":    pubV6,
 		"Uptime":        formatUptime(host.Uptime),

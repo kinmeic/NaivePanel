@@ -79,6 +79,7 @@
       <h2>{{icon "server"}}系统信息</h2>
       <dl class="system-info-list">
         <div><dt>主机名</dt><dd>{{.Data.Host.Hostname}}</dd></div>
+        {{if .Data.ServerAlias}}<div><dt>服务器别名</dt><dd>{{.Data.ServerAlias}}</dd></div>{{end}}
         <div><dt>发行版</dt><dd>{{.Data.Host.Distribution}}</dd></div>
         <div><dt>内核版本</dt><dd><code>{{.Data.Host.KernelVersion}}</code></dd></div>
         <div><dt>系统类型</dt><dd>{{.Data.Host.SystemType}}</dd></div>

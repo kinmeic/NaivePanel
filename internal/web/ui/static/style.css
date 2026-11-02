@@ -314,6 +314,9 @@ button:disabled { opacity: .65; cursor: wait; }
 .logbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 .logs { max-height: 70vh; overflow-y: auto; }
 .operation-log-table { min-width: 820px; }
+.fail2ban-table { min-width: 760px; }
+.fail2ban-table td { overflow-wrap: anywhere; }
+#fail2ban-rules { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .operation-log-time, .operation-log-duration { white-space: nowrap; }
 .operation-log-path { max-width: 520px; overflow-wrap: anywhere; word-break: break-word; }
 
