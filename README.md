@@ -25,14 +25,14 @@ BypassCore 分流核心、Cloudflare WARP 与 Geo 数据文件。
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动更新、镜像源
 - **日志**：查看面板操作审计记录，以及 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
-- **fail2ban**：账号安全页通过 Debian/Ubuntu 软件源后台安装，支持启停、重启、自启、jail 规则编辑、
-  校验与失败回滚，以及最近封禁 IP 的封禁/实际解禁时间（IPv4 / IPv6）
+- **fail2ban**：WARP 下方的独立菜单，通过 Debian/Ubuntu 软件源后台安装，支持启停、重启、自启、
+  结构化 / Raw jail 规则编辑、校验与失败回滚，以及每页 20 条的最近封禁 IP 和封禁/实际解禁时间（IPv4 / IPv6）
 - **服务器别名**：应用管理页设置或清除，保存后在概览系统信息的主机名下方显示
 
 Caddy 编辑器只维护 `caddy.main_file` 指向的主 Caddyfile；该文件导入的其他片段仍由 Caddy
 正常加载，但不会被拼接进编辑器，避免保存主文件时意外改写外部配置。
 
-账号安全页的 fail2ban 编辑器只维护 `/etc/fail2ban/jail.d/zz-naivepanel.local`，
+Fail2ban 页在刷新按钮左侧提供“编辑配置”，配置编辑页只维护 `/etc/fail2ban/jail.d/zz-naivepanel.local`，
 不会改写现有 `jail.conf`、`jail.local` 或其他 jail 文件。首次显示的是未保存的示例：
 确认 SSH 的实际 `port`，将 `[sshd]` 中的 `enabled` 改为 `true` 后保存；
 可调整 `bantime`、`findtime`、`maxretry`、`ignoreip`，也可添加其他已有过滤器的 jail。
@@ -40,8 +40,12 @@ Caddy 编辑器只维护 `caddy.main_file` 指向的主 Caddyfile；该文件导
 配置语法参见 [Fail2ban 官方配置说明](https://github.com/fail2ban/fail2ban/blob/master/man/jail.conf.5)。
 SSH jail 保护 SSH 登录；面板登录继续使用自身的登录锁定和 MFA。
 封禁记录取自当前及上一份未压缩日志（各最多 1 MiB）和最近 2000 条 systemd journal，
-最多显示 200 个封禁周期，当前封禁优先。日期时间使用服务器本地时区，
+在上述日志范围内按每页 20 条翻页，不再额外截断为 200 条，当前封禁优先。日期时间使用服务器本地时区，
 不推算解禁时间；日志轮转丢失或恢复封禁导致时间不可得时显示“未记录”。
+编辑页明确标示配置是否已保存，并独立显示运行中的 sshd jail 状态。
+未保存示例中的 `enabled = false` 不代表服务器最终配置；已保存文件也会与其他文件合并，
+关闭 jail 不会删除历史封禁/解禁记录。结构化编辑保留未修改的注释和自定义选项，
+无法安全解析的语法保留在 Raw 中编辑。
 
 ## WARP
 
@@ -116,7 +120,7 @@ xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy（默认 Caddy v2.
 
 ```bash
 # 1. 下载 release 并校验完整性（版本号换成最新 tag）
-VER=v0.5.5
+VER=v0.5.6
 cd /tmp
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/naivepanel-linux-amd64.tar.gz"
 curl -fLO "https://github.com/kinmeic/NaivePanel/releases/download/${VER}/SHA256SUMS"

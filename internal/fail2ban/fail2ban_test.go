@@ -120,6 +120,10 @@ func TestApplyRulesReportsFailedRecovery(t *testing.T) {
 
 func TestReadRulesDefaultAndSizeLimit(t *testing.T) {
 	m := testManager(t)
+	file, err := m.ReadRuleFile()
+	if err != nil || file.Saved || file.Path != m.rulesPath {
+		t.Fatalf("draft state: %#v %v", file, err)
+	}
 	got, err := m.ReadRules()
 	if err != nil || got != DefaultRules {
 		t.Fatalf("default: %q %v", got, err)
@@ -138,6 +142,24 @@ func TestReadRulesDefaultAndSizeLimit(t *testing.T) {
 	}
 	if err := m.ApplyRules("[sshd]\x00"); err == nil {
 		t.Fatal("NUL accepted")
+	}
+}
+
+func TestReadRuleFileSavedStateAndUnboundedHistory(t *testing.T) {
+	m := testManager(t)
+	if err := atomicWrite(m.rulesPath, []byte("[sshd]\nenabled = false\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	file, err := m.ReadRuleFile()
+	if err != nil || !file.Saved || file.Content != "[sshd]\nenabled = false\n" {
+		t.Fatalf("saved state: %#v %v", file, err)
+	}
+	var events []banEvent
+	for i := 0; i < 250; i++ {
+		events = append(events, banEvent{jail: "sshd", ip: "192.0.2.1", action: "Ban", at: time.Unix(int64(i*2), 0)}, banEvent{jail: "sshd", ip: "192.0.2.1", action: "Unban", at: time.Unix(int64(i*2+1), 0)})
+	}
+	if records := buildRecords(events, nil, 0); len(records) != 250 {
+		t.Fatalf("pagination lost records: %d", len(records))
 	}
 }
 

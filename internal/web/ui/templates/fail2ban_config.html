@@ -1,0 +1,72 @@
+{{define "content"}}
+<div class="editor-title">
+  <a class="btn icon-btn" href="{{.Base}}/fail2ban" title="返回 Fail2ban" aria-label="返回 Fail2ban">{{icon "arrow-left"}}</a>
+  <div><h1>Fail2ban 配置编辑</h1><p class="muted">结构化配置与 Raw INI 双向同步，保存时校验合并配置并在应用失败时恢复原规则。</p></div>
+</div>
+<div class="notice">
+  <p>编辑文件：<code class="path-code">{{.Data.RuleFile.Path}}</code>。这里只编辑面板的覆盖文件，系统的其他配置继续参与合并。</p>
+  <p>当前运行的 SSH 防护（sshd jail）：<strong>{{.Data.SSHDState}}</strong>。{{if not .Data.Readable}}<strong class="warn">配置文件无法读取，编辑已禁用。</strong>{{else if .Data.RuleFile.Saved}}正在编辑已保存的面板配置，修改后需保存才生效。{{else}}<strong class="warn">当前是未保存的示例，不代表服务器实际配置。</strong>{{end}}</p>
+  <p class="muted">文件中的 enabled 表示该文件的设置；留空表示继承其他配置。历史封禁记录不会因当前关闭 jail 而消失。</p>
+</div>
+{{if not .Data.Fail2ban.Installed}}<div class="warning">请先返回 Fail2ban 页安装服务。</div>{{end}}
+{{if .Data.Fail2ban.StatusError}}<div class="warning">{{.Data.Fail2ban.StatusError}}</div>{{end}}
+{{if .Data.Error}}<div class="error" role="alert">{{.Data.Error}}</div>{{end}}
+{{if .Data.Pending}}<div class="notice">{{.Data.Pending}}。操作完成后请刷新。</div>{{end}}
+<div id="fail2ban-editor-error" class="warning hidden" role="alert"></div>
+<form method="post" action="{{.Base}}/fail2ban/config" id="fail2ban-config-form" data-initial-tab="{{.Data.ActiveTab}}">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <input type="hidden" name="editor_tab" id="fail2ban-editor-tab" value="{{.Data.ActiveTab}}">
+  <fieldset class="fail2ban-editor-fields" {{if or (not .Data.Readable) (not .Data.Fail2ban.Installed) .Data.Pending}}disabled{{end}}>
+    <div class="config-tabs" role="tablist" aria-label="Fail2ban 配置区域">
+      <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="fail2ban-panel-base" data-fail2ban-tab="base">全局配置</button>
+      <button type="button" class="config-tab" role="tab" aria-selected="false" aria-controls="fail2ban-panel-jails" data-fail2ban-tab="jails">jails</button>
+      <button type="button" class="config-tab active" role="tab" aria-selected="true" aria-controls="fail2ban-panel-raw" data-fail2ban-tab="raw">raw</button>
+    </div>
+    <section class="config-panel hidden" id="fail2ban-panel-base" role="tabpanel" data-fail2ban-panel="base">
+      <h2>全局默认值 [DEFAULT]</h2>
+      <p class="muted">以下字段只修改本文件的默认值。留空表示不覆盖，单个 jail 的设置优先于默认值；时间可填写 10m、1h、1d 或秒数。</p>
+      <div class="config-field-grid">
+        <label>封禁时长（bantime）<input data-fail2ban-default="bantime" placeholder="继承，例如 1h"></label>
+        <label>统计窗口（findtime）<input data-fail2ban-default="findtime" placeholder="继承，例如 10m"></label>
+        <label>失败次数阈值（maxretry）<input data-fail2ban-default="maxretry" placeholder="继承，例如 5"></label>
+        <label>防火墙动作（banaction）<input data-fail2ban-default="banaction" placeholder="继承，例如 nftables-multiport"></label>
+      </div>
+      <label>可信 IP / CIDR 白名单（ignoreip）<textarea data-fail2ban-default="ignoreip" rows="2" placeholder="继承；多个地址用空格或换行分隔"></textarea></label>
+      <p class="muted">自定义选项、注释和其他节会保留，可在 Raw 中继续编辑。</p>
+    </section>
+    <section class="config-panel hidden" id="fail2ban-panel-jails" role="tabpanel" data-fail2ban-panel="jails">
+      <div class="config-section-head"><div><h2>jail 规则</h2><p class="muted">显示本文件中的 jail，enabled 列为本文件设置。系统其他文件定义的 jail 不会在这里自动展开。</p></div><button type="button" class="btn" id="fail2ban-jail-add">{{icon "plus"}}添加 jail</button></div>
+      <div class="table-scroll"><table class="config-array-table fail2ban-jails-table"><thead><tr><th>jail</th><th>本文件 enabled</th><th>端口</th><th>backend</th><th>操作</th></tr></thead><tbody id="fail2ban-jail-rows"></tbody></table></div>
+    </section>
+    <section class="config-panel" id="fail2ban-panel-raw" role="tabpanel" data-fail2ban-panel="raw">
+      <p class="muted">编辑完整的面板覆盖文件。切换回结构化区域时会重新解析；遇到不支持的语法时，保留原文并继续使用 Raw 编辑。</p>
+      <label for="fail2ban-config-raw">Raw INI</label><textarea id="fail2ban-config-raw" name="rules" rows="26" class="mono wide" spellcheck="false">{{.Data.Rules}}</textarea>
+    </section>
+    <noscript><p class="muted">结构化编辑需要 JavaScript，目前可直接编辑 Raw INI 并保存。</p></noscript>
+    <p class="muted">保存会校验所有合并后的配置；服务运行中自动重新加载，停止时下次启动生效。配置检查或加载失败会恢复原文件。</p>
+    <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存配置</button><a class="btn" href="{{.Base}}/fail2ban">返回 Fail2ban</a></div>
+  </fieldset>
+</form>
+<dialog id="fail2ban-jail-dialog" class="config-dialog" aria-labelledby="fail2ban-jail-dialog-title">
+  <form method="dialog" id="fail2ban-jail-form">
+    <div class="dialog-head"><h2 id="fail2ban-jail-dialog-title">编辑 jail</h2><button type="button" class="icon-btn" data-fail2ban-dialog-close aria-label="关闭">{{icon "x"}}</button></div>
+    <div id="fail2ban-jail-error" class="error hidden" role="alert"></div>
+    <label>jail 名称<input id="fail2ban-jail-name" required placeholder="例如 sshd、recidive"></label>
+    <div class="config-field-grid">
+      <label>是否启用（enabled）<select data-fail2ban-jail="enabled"><option value="">继承其他配置</option><option value="true">true（启用）</option><option value="false">false（关闭）</option></select></label>
+      <label>日志后端（backend）<select data-fail2ban-jail="backend"><option value="">继承其他配置</option><option value="auto">auto</option><option value="systemd">systemd</option><option value="polling">polling</option><option value="pyinotify">pyinotify</option></select></label>
+      <label>端口（port）<input data-fail2ban-jail="port" placeholder="继承，例如 22 或 22,2222"></label>
+      <label>过滤器（filter）<input data-fail2ban-jail="filter" placeholder="继承，例如 sshd"></label>
+      <label>封禁时长（bantime）<input data-fail2ban-jail="bantime" placeholder="继承，例如 1h"></label>
+      <label>统计窗口（findtime）<input data-fail2ban-jail="findtime" placeholder="继承，例如 10m"></label>
+      <label>失败次数阈值（maxretry）<input data-fail2ban-jail="maxretry" placeholder="继承，例如 5"></label>
+      <label>防火墙动作（banaction）<input data-fail2ban-jail="banaction" placeholder="继承其他配置"></label>
+    </div>
+    <label>可信 IP / CIDR 白名单（ignoreip）<textarea data-fail2ban-jail="ignoreip" rows="2" placeholder="继承其他配置"></textarea></label>
+    <label>日志路径（logpath）<textarea data-fail2ban-jail="logpath" rows="2" placeholder="继承其他配置；systemd 后端使用 journal"></textarea></label>
+    <p class="muted">只更新以上字段，其他选项保留。空白字段会移除本文件的对应设置，恢复继承。</p>
+    <div class="actions dialog-actions"><button type="submit" class="primary">应用到编辑区</button><button type="button" class="btn" data-fail2ban-dialog-close>取消</button></div>
+  </form>
+</dialog>
+<script src="{{.Base}}/static/fail2ban-config.js"></script>
+{{end}}

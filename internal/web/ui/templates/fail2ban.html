@@ -1,0 +1,75 @@
+{{define "content"}}
+<h1>Fail2ban</h1>
+<div class="card">
+  <h3>{{icon "shield-check"}}服务控制</h3>
+  <div class="service-status-line">
+    <span class="service-status-item">安装状态：{{if .Data.Fail2ban.Installed}}<span class="ok">已安装</span>{{else}}<span class="muted">未安装</span>{{end}}</span>
+    {{if .Data.Fail2ban.Installed}}
+    <span class="service-status-item">服务：{{if .Data.Fail2ban.Active}}<span class="ok">运行中</span>{{else}}<span class="warn">未运行</span>{{end}}</span>
+    <span class="service-status-item">开机自启：{{if .Data.Fail2ban.Enabled}}<span class="ok">已开启</span>{{else}}<span class="muted">已关闭</span>{{end}}</span>
+    {{end}}
+  </div>
+  {{if .Data.Pending}}<p class="notice">{{.Data.Pending}}。可刷新页面查看最新状态。</p>{{end}}
+  {{if not .Data.Fail2ban.Installed}}
+  <p class="muted">通过 Debian/Ubuntu 系统软件源安装 fail2ban 和 systemd 日志依赖，安装过程在后台执行。安装后请确认规则和服务状态。</p>
+  <form method="post" action="{{.Base}}/fail2ban/install">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button type="submit" class="primary" data-async-operation data-operation-name="安装" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if .Data.Pending}}disabled{{end}}>{{icon "download"}}安装 fail2ban</button>
+  </form>
+  {{else}}
+  <form method="post" action="{{.Base}}/fail2ban/service" class="service-actions">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <button name="action" value="start" data-async-operation data-operation-name="启动" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if or .Data.Fail2ban.Active .Data.Pending}}disabled{{end}}>{{icon "play"}}启动</button>
+    <button name="action" value="stop" data-async-operation data-operation-name="停止" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if or (not .Data.Fail2ban.Active) .Data.Pending}}disabled{{end}}>{{icon "square"}}停止</button>
+    <button name="action" value="restart" data-async-operation data-operation-name="重启" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if .Data.Pending}}disabled{{end}}>{{icon "rotate-cw"}}重启</button>
+    {{if .Data.Fail2ban.Enabled}}
+    <button name="action" value="disable" data-async-operation data-operation-name="关闭自启" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if .Data.Pending}}disabled{{end}}>关闭自启</button>
+    {{else}}
+    <button name="action" value="enable" data-async-operation data-operation-name="开启自启" data-service-label="fail2ban" data-progress-target="fail2ban-progress" {{if .Data.Pending}}disabled{{end}}>开启自启</button>
+    {{end}}
+    <a class="btn" href="{{.Base}}/fail2ban/config">{{icon "pencil"}}编辑配置</a>
+    <a class="btn" href="{{.Base}}/fail2ban?page={{.Data.Page}}">{{icon "refresh-cw"}}刷新</a>
+  </form>
+  {{if .Data.Fail2ban.StatusError}}<div class="error">{{.Data.Fail2ban.StatusError}}</div>{{end}}
+  <p>当前运行的 SSH 防护（sshd jail）：<strong>{{.Data.SSHDState}}</strong></p>
+  {{if and .Data.Fail2ban.Active (not .Data.Fail2ban.StatusError)}}
+  <p>当前封禁：<strong>{{.Data.Fail2ban.CurrentCount}}</strong> 个 IP / 规则组合。当前启用的 jail：{{range .Data.Fail2ban.Jails}}<code>{{.}}</code> {{else}}<span class="muted">暂无</span>{{end}}</p>
+  {{end}}
+  {{end}}
+  <div id="fail2ban-progress" class="operation-progress hidden" role="status" aria-live="polite">
+    <div class="operation-progress-head"><span class="spinner" aria-hidden="true"></span><strong data-operation-title>正在处理 fail2ban</strong></div>
+    <div class="operation-progress-track"><span data-operation-bar></span></div>
+    <p data-operation-message>正在提交请求…</p>
+  </div>
+</div>
+
+{{if .Data.Fail2ban.Installed}}
+<h2>最近封禁的 IP</h2>
+<p class="muted">每页 20 条，当前封禁优先，其余按最近事件倒序。历史记录在关闭 jail 后仍会保留，不代表该 jail 当前已启用。时间使用服务器本地时区，缺失时显示“未记录”。</p>
+<details class="notice"><summary>记录范围与状态说明</summary><p>读取当前日志及上一份未压缩日志（各最多 1 MiB）和最近 2000 条 journal，分页展示此范围内全部封禁周期。解禁时间来自实际日志；服务停止或查询失败时，未闭合记录显示“状态未知”。</p></details>
+{{if .Data.Fail2ban.HistoryError}}<div class="warning">部分记录可能不完整：{{.Data.Fail2ban.HistoryError}}</div>{{end}}
+<div class="table-scroll">
+  <table class="fail2ban-table">
+    <thead><tr><th>IP 地址</th><th>规则（jail）</th><th>状态</th><th>封禁日期时间</th><th>解禁日期时间</th></tr></thead>
+    <tbody>
+      {{range .Data.Fail2ban.Records}}
+      <tr>
+        <td><code>{{.IP}}</code></td><td>{{.Jail}}</td>
+        <td><span class="{{if .Current}}bad{{else}}muted{{end}}">{{.State}}</span></td>
+        <td>{{if .BannedAt.IsZero}}<span class="muted">未记录</span>{{else}}{{fmtTime .BannedAt}}{{end}}</td>
+        <td>{{if .Current}}尚未解禁{{else if .UnbannedAt.IsZero}}<span class="muted">未记录</span>{{else}}{{fmtTime .UnbannedAt}}{{end}}</td>
+      </tr>
+      {{else}}<tr><td colspan="5" class="config-empty-cell">暂无封禁记录</td></tr>{{end}}
+    </tbody>
+  </table>
+</div>
+<nav class="pagination" aria-label="封禁记录分页">
+  <span class="muted">共 {{.Data.Total}} 条，显示 {{.Data.First}}–{{.Data.Last}} 条；第 {{.Data.Page}} / {{.Data.Pages}} 页</span>
+  <div class="pagination-links">
+    {{if gt .Data.Page 1}}<a class="btn" href="{{.Base}}/fail2ban?page=1">首页</a><a class="btn" href="{{.Base}}/fail2ban?page={{.Data.PreviousPage}}">上一页</a>{{else}}<span class="btn muted" aria-disabled="true">首页</span><span class="btn muted" aria-disabled="true">上一页</span>{{end}}
+    {{if lt .Data.Page .Data.Pages}}<a class="btn" href="{{.Base}}/fail2ban?page={{.Data.NextPage}}">下一页</a><a class="btn" href="{{.Base}}/fail2ban?page={{.Data.Pages}}">末页</a>{{else}}<span class="btn muted" aria-disabled="true">下一页</span><span class="btn muted" aria-disabled="true">末页</span>{{end}}
+  </div>
+  {{if gt .Data.Pages 1}}<form method="get" action="{{.Base}}/fail2ban" class="pagination-jump"><label>跳至<input type="number" name="page" min="1" max="{{.Data.Pages}}" value="{{.Data.Page}}" required aria-label="页码"></label><button type="submit">跳转</button></form>{{end}}
+</nav>
+{{end}}
+{{end}}

@@ -67,7 +67,9 @@ func (m *Manager) Snapshot() Snapshot {
 	if err != nil {
 		s.HistoryError = err.Error()
 	}
-	s.Records = buildRecords(events, current, 200)
+	// The web layer paginates all records available within the bounded log
+	// window. Do not discard older cycles before the page is selected.
+	s.Records = buildRecords(events, current, 0)
 	return s
 }
 
@@ -245,7 +247,7 @@ func buildRecords(events []banEvent, current map[string][]string, limit int) []B
 		}
 		return records[i].observedAt.After(records[j].observedAt)
 	})
-	if len(records) > limit {
+	if limit > 0 && len(records) > limit {
 		records = records[:limit]
 	}
 	return records

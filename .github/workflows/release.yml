@@ -26,14 +26,18 @@ jobs:
       - name: Cross-compile (linux amd64 + arm64)
         run: |
           set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/naivepanel-release"
           for arch in amd64 arm64; do
             mkdir -p "${RUNNER_TEMP}/naivepanel-${arch}"
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
               -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" \
               -o "${RUNNER_TEMP}/naivepanel-${arch}/naivepanel" ./cmd/naivepanel
-            tar -czf "naivepanel-linux-${arch}.tar.gz" \
+            tar -czf "${RUNNER_TEMP}/naivepanel-release/naivepanel-linux-${arch}.tar.gz" \
               -C "${RUNNER_TEMP}/naivepanel-${arch}" naivepanel
           done
+          test "$("${RUNNER_TEMP}/naivepanel-amd64/naivepanel" version)" = "naivepanel ${GITHUB_REF_NAME}"
+          test -z "$(git status --porcelain)"
+          cd "${RUNNER_TEMP}/naivepanel-release"
           sha256sum naivepanel-linux-*.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
@@ -41,7 +45,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            naivepanel-linux-amd64.tar.gz
-            naivepanel-linux-arm64.tar.gz
-            SHA256SUMS
+            ${{ runner.temp }}/naivepanel-release/naivepanel-linux-amd64.tar.gz
+            ${{ runner.temp }}/naivepanel-release/naivepanel-linux-arm64.tar.gz
+            ${{ runner.temp }}/naivepanel-release/SHA256SUMS
           generate_release_notes: true

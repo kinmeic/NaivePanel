@@ -159,18 +159,35 @@ func (m *Manager) Action(verb string) error {
 	return nil
 }
 
-func (m *Manager) ReadRules() (string, error) {
+type RuleFile struct {
+	Content string
+	Path    string
+	Saved   bool
+}
+
+// ReadRuleFile distinguishes a proposed template from a persisted override.
+// Neither is a representation of all merged configuration or runtime state.
+func (m *Manager) ReadRuleFile() (RuleFile, error) {
+	file := RuleFile{Path: m.rulesPath}
 	b, err := readTail(m.rulesPath, maxRulesSize+1)
 	if errors.Is(err, os.ErrNotExist) {
-		return DefaultRules, nil
+		file.Content = DefaultRules
+		return file, nil
 	}
 	if err != nil {
-		return "", err
+		return file, err
 	}
+	file.Saved = true
 	if len(b) > maxRulesSize {
-		return "", errors.New("规则文件超过 128 KiB，请在服务器上编辑")
+		return file, errors.New("规则文件超过 128 KiB，请在服务器上编辑")
 	}
-	return string(b), nil
+	file.Content = string(b)
+	return file, nil
+}
+
+func (m *Manager) ReadRules() (string, error) {
+	file, err := m.ReadRuleFile()
+	return file.Content, err
 }
 
 func atomicWrite(path string, content []byte, mode os.FileMode) error {

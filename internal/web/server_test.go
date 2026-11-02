@@ -435,7 +435,7 @@ func TestNewParsesAllTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, page := range []string{"dashboard", "caddy", "caddy_config", "bypass", "bypass_config", "cron", "cron_form", "logs", "settings", "security"} {
+	for _, page := range []string{"dashboard", "caddy", "caddy_config", "bypass", "bypass_config", "cron", "cron_form", "logs", "settings", "security", "fail2ban", "fail2ban_config"} {
 		if server.pages[page] == nil {
 			t.Errorf("template %q was not parsed", page)
 		}

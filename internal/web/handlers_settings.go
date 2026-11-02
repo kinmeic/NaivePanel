@@ -58,7 +58,6 @@ func (s *Server) securityData(r *http.Request) map[string]any {
 		"RecoveryLeft":   s.Cfg.RecoveryCount(),
 		"PendingTOTPQR":  "",
 		"PendingTOTPSet": false,
-		"Fail2ban":       s.Fail2ban.Snapshot(),
 	}
 	if sess := s.session(r); sess != nil {
 		if secret, otpauthURL := sess.PendingTOTP(); secret != "" {
@@ -70,19 +69,6 @@ func (s *Server) securityData(r *http.Request) map[string]any {
 			}
 		}
 	}
-	rules, err := s.Fail2ban.ReadRules()
-	data["Fail2banRules"] = rules
-	if err != nil {
-		data["Fail2banRulesError"] = "读取规则失败: " + err.Error()
-	}
-	data["Fail2banRulesReadable"] = err == nil
-	s.serviceOpsMu.Lock()
-	if id := s.activeServiceOps["fail2ban"]; id != "" {
-		if operation := s.serviceOps[id]; operation != nil {
-			data["Fail2banPending"] = operation.Message
-		}
-	}
-	s.serviceOpsMu.Unlock()
 	return data
 }
 

@@ -209,6 +209,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/warp/settings", s.protect(s.handleWARPSettings))
 	s.mux.HandleFunc("POST "+bp+"/warp/license", s.protect(s.handleWARPLicense))
 	s.mux.HandleFunc("POST "+bp+"/warp/egress", s.protect(s.handleWARPEgress))
+	s.mux.HandleFunc("GET "+bp+"/fail2ban", s.protect(s.handleFail2ban))
+	s.mux.HandleFunc("POST "+bp+"/fail2ban/install", s.protect(s.handleFail2banInstall))
+	s.mux.HandleFunc("POST "+bp+"/fail2ban/service", s.protect(s.handleFail2banService))
+	s.mux.HandleFunc("GET "+bp+"/fail2ban/config", s.protect(s.handleFail2banConfig))
+	s.mux.HandleFunc("POST "+bp+"/fail2ban/config", s.protect(s.handleFail2banRules))
 
 	s.mux.HandleFunc("GET "+bp+"/terminal", s.protect(s.handleTerminal))
 	s.mux.HandleFunc("POST "+bp+"/terminal/install", s.protect(s.handleTerminalInstall))
@@ -229,6 +234,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/settings/update", s.protect(s.handleUpdateSettings))
 	s.mux.HandleFunc("POST "+bp+"/settings/geo", s.protect(s.handleUpdateSettings))
 	s.mux.HandleFunc("GET "+bp+"/security", s.protect(s.handleSecurity))
+	// Compatibility for Fail2ban forms opened before its page was moved.
 	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/install", s.protect(s.handleFail2banInstall))
 	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/service", s.protect(s.handleFail2banService))
 	s.mux.HandleFunc("POST "+bp+"/security/fail2ban/rules", s.protect(s.handleFail2banRules))

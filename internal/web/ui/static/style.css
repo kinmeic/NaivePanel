@@ -316,7 +316,14 @@ button:disabled { opacity: .65; cursor: wait; }
 .operation-log-table { min-width: 820px; }
 .fail2ban-table { min-width: 760px; }
 .fail2ban-table td { overflow-wrap: anywhere; }
-#fail2ban-rules { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#fail2ban-config-raw { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.fail2ban-editor-fields { border: 0; padding: 0; margin: 0; background: none; min-width: 0; }
+.fail2ban-jails-table { min-width: 620px; }
+.pagination, .pagination-links, .pagination-jump { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.pagination { justify-content: space-between; margin: 16px 0; }
+.pagination .btn[aria-disabled="true"] { opacity: .55; cursor: default; }
+.pagination-jump label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.pagination-jump input { width: 80px; margin: 0; }
 .operation-log-time, .operation-log-duration { white-space: nowrap; }
 .operation-log-path { max-width: 520px; overflow-wrap: anywhere; word-break: break-word; }
 
