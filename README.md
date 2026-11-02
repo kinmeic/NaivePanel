@@ -58,6 +58,15 @@ RHEL 系列需具备可用的 EPEL 软件源。其他发行版可按官方说明
 sudo bash install.sh
 ```
 
+不克隆仓库也可以直接下载脚本，并自动选择 GitHub Release 预编译面板：
+
+```bash
+curl -fL https://raw.githubusercontent.com/kinmeic/NaivePanel/main/install.sh -o install.sh
+sudo env NAIVEPANEL_INSTALL_METHOD=release bash install.sh
+```
+
+脚本会下载最新 Release，并校验预编译包。若已克隆仓库并希望从源码构建，运行 `sudo bash install.sh`，在安装方式处选择 1。
+
 脚本会交互询问域名/面板路径/管理员账号密码，以及面板二进制来源（当前源码构建或下载 GitHub
 最新 Release；下载时会校验 `SHA256SUMS` 并检查二进制版本）。随后检测并安装官方 Caddy，按需用
 xcaddy 编译含 `klzgrad/forwardproxy@naive` 的定制 Caddy（默认 Caddy v2.11.7 + 该分支已钉提交，
