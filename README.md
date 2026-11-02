@@ -156,7 +156,7 @@ grep -q 'import /etc/caddy/sites' /etc/caddy/Caddyfile 2>/dev/null || \
 
 # 5. 面板寄宿站点的引导片段（面板上线后由它接管渲染，此处仅为首次拉起面板）
 sudo tee "/etc/caddy/sites/example.com.caddy" >/dev/null <<EOF
-:443, example.com {
+example.com {
 	handle ${BASE_PATH}/* {
 		reverse_proxy 127.0.0.1:9000 {
 			header_up X-NaivePanel-Key ${PROXY_TOKEN}

@@ -25,7 +25,7 @@ func TestRenderHostSiteFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		":443, example.com {",
+		"example.com {",
 		"handle /manage-abc/* {",
 		"reverse_proxy 127.0.0.1:9000 {",
 		"header_up X-NaivePanel-Key secret-token-123",

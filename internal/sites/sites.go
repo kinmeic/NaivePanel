@@ -230,7 +230,9 @@ func Render(s *Site, panel PanelInfo, hostSite bool, socksPort int) (string, err
 	}
 
 	var b strings.Builder
-	b.WriteString(":443, " + token(s.Domain) + " {\n")
+	// A hostname already implies HTTPS on port 443. Adding a shared `:443`
+	// address makes otherwise independent site blocks ambiguous in Caddy.
+	b.WriteString(token(s.Domain) + " {\n")
 	if strings.TrimSpace(s.SiteOptions) != "" {
 		indent(&b, 1, strings.TrimSpace(s.SiteOptions))
 		b.WriteString("\n")

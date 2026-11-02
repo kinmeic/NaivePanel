@@ -141,7 +141,7 @@ geo:
 渲染示例：
 
 ```caddyfile
-:443, example.com {
+example.com {
     route {
         handle /manage-x7k2q9/* {
             reverse_proxy 127.0.0.1:9000
@@ -244,16 +244,17 @@ HTTP over Unix Socket（`/run/bypasscore/control.sock`），面板以 root 直�
 
 1. 环境检测：apt 系发行版、架构（amd64/arm64）、内存（< 1.5G 自动创建 2G 临时 swap，编译完成后询问保留与否）
 2. 交互询问：服务器域名、面板路径（默认随机）、管理员账号、管理员密码（二次确认）、GOPROXY 镜像选择（默认 goproxy.cn）
-3. 安装 Go（按架构官方 tarball → /usr/local/go，幂等：已存在且版本 >= 1.22 则跳过）
-4. Caddy 检测与安装：
+3. 安装基础依赖：若系统启用了 `landscape-sysinfo` 且 `/usr/bin/python3` 无法导入 `netifaces`，重装 `python3-minimal` 与 `python3-netifaces` 恢复系统解释器入口和扩展模块；若仍失败，提示检查 `/usr/bin/python3` 是否指向发行版默认 Python
+4. 安装 Go（按架构官方 tarball → /usr/local/go，幂等：已存在且版本 >= 1.22 则跳过）
+5. Caddy 检测与安装：
    - 已安装：提示用户决策（使用现有 / 重新安装 / 中止）
    - 未安装：官方 apt 仓库安装，启动一次生成默认配置后停止
-5. `go install github.com/caddyserver/xcaddy/cmd/xcaddy@<pin版本>`，再 `~/go/bin/xcaddy build <caddy_pin> --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@<forwardproxy_pin>`；go/caddy/xcaddy/forwardproxy 四个版本全部钉在脚本变量中（均可用 `NAIVEPANEL_*` 环境变量临时覆盖），当前组合为 go 1.27.3 + caddy v2.11.7 + forwardproxy naive 分支提交 c096d6a（tag `v2.11.7-naive`）+ xcaddy v0.4.7。编译后强制校验 `caddy version` 与 `http.handlers.forward_proxy` 模块，不符则中止
-6. 备份官方二进制为 `/usr/bin/caddy.official`（仅首次），产物直接覆盖 `/usr/bin/caddy`；`apt-mark hold caddy` 防止 apt 升级回覆盖
-7. 部署面板二进制（优先 repo 内 `make build` 产物；支持 `-r` 从 release 下载）+ naivepanel.service
-8. 调用 `naivepanel hash-password` 生成 Argon2id 哈希，写 `/etc/naivepanel/config.yaml`（0600）
-9. 渲染主 Caddyfile + 首站点片段（含面板块 + forward_proxy 表单留待面板内配置）→ `caddy validate` → 启动 caddy / naivepanel
-10. 输出访问信息：`https://<domain><base_path>/` + 账号，提示路径只显示一次
+6. `go install github.com/caddyserver/xcaddy/cmd/xcaddy@<pin版本>`，再 `~/go/bin/xcaddy build <caddy_pin> --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@<forwardproxy_pin>`；go/caddy/xcaddy/forwardproxy 四个版本全部钉在脚本变量中（均可用 `NAIVEPANEL_*` 环境变量临时覆盖），当前组合为 go 1.27.3 + caddy v2.11.7 + forwardproxy naive 分支提交 c096d6a（tag `v2.11.7-naive`）+ xcaddy v0.4.7。编译后强制校验 `caddy version` 与 `http.handlers.forward_proxy` 模块，不符则中止
+7. 备份官方二进制为 `/usr/bin/caddy.official`（仅首次），产物直接覆盖 `/usr/bin/caddy`；`apt-mark hold caddy` 防止 apt 升级回覆盖
+8. 部署面板二进制（优先 repo 内 `make build` 产物；支持 `-r` 从 release 下载）+ naivepanel.service
+9. 调用 `naivepanel hash-password` 生成 Argon2id 哈希，写 `/etc/naivepanel/config.yaml`（0600）
+10. 若面板寄宿域名已有站点块，只向其 `route` 插入面板反代并以 `raw_mode` 保存原站点；否则生成首站点片段 → `caddy validate` → 启动 caddy / naivepanel
+11. 输出访问信息：`https://<domain><base_path>/` + 账号，提示路径只显示一次
 
 ## 10. 面板 HTTP 路由表
 

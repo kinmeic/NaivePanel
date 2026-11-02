@@ -27,6 +27,7 @@ PANEL_BIN="/usr/local/bin/naivepanel"
 CADDY_BIN="/usr/bin/caddy"
 PANEL_CONFIG_DIR="/etc/naivepanel"
 PANEL_CONFIG="${PANEL_CONFIG_DIR}/config.yaml"
+CADDYFILE="/etc/caddy/Caddyfile"
 CADDY_SITES_DIR="/etc/caddy/sites"
 # ==================================
 
@@ -35,6 +36,166 @@ info()  { echo "${BLUE}[*]${NC} $*"; }
 ok()    { echo "${GREEN}[✓]${NC} $*"; }
 warn()  { echo "${YELLOW}[!]${NC} $*"; }
 die()   { echo "${RED}[✗]${NC} $*" >&2; exit 1; }
+
+# Print one top-level Caddy site block whose address contains the exact domain.
+caddy_site_block() {
+  local file="$1" domain="$2" output="$3"
+  awk -v wanted="$domain" '
+    function trim(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    function strip_comment(s,    i, ch, quote, escaped, out) {
+      out = ""; quote = 0; escaped = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (escaped) { out = out ch; escaped = 0; continue }
+        if (ch == "\\" && quote) { out = out ch; escaped = 1; continue }
+        if (ch == "\"") { quote = !quote; out = out ch; continue }
+        if (ch == "#" && !quote && (i == 1 || substr(s, i - 1, 1) ~ /[[:space:]]/)) break
+        out = out ch
+      }
+      return out
+    }
+    function brace_delta(s,    i, ch, quote, escaped, n) {
+      s = strip_comment(s); quote = 0; escaped = 0; n = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (escaped) { escaped = 0; continue }
+        if (ch == "\\" && quote) { escaped = 1; continue }
+        if (ch == "\"") { quote = !quote; continue }
+        if (!quote && ch == "{") n++
+        if (!quote && ch == "}") n--
+      }
+      return n
+    }
+    function block_domain(s,    n, a, i, addr) {
+      s = trim(strip_comment(s))
+      if (s !~ /\{[[:space:]]*$/) return ""
+      sub(/[[:space:]]*\{[[:space:]]*$/, "", s)
+      n = split(s, a, ",")
+      for (i = 1; i <= n; i++) {
+        addr = trim(a[i])
+        sub(/^\"/, "", addr); sub(/\"$/, "", addr)
+        sub(/^https?:\/\//, "", addr)
+        if (addr == "" || addr ~ /^:/ || addr ~ /^\(/) continue
+        sub(/:[0-9]+$/, "", addr)
+        if (addr == wanted) return addr
+      }
+      return ""
+    }
+    { lines[NR] = $0 }
+    END {
+      depth = 0; start = 0
+      for (i = 1; i <= NR; i++) {
+        if (depth == 0 && block_domain(lines[i]) == wanted) {
+          start = i
+          depth = brace_delta(lines[i])
+          if (depth == 0) { print lines[i]; exit 0 }
+          continue
+        }
+        depth += brace_delta(lines[i])
+        if (start && depth == 0) {
+          for (j = start; j <= i; j++) print lines[j]
+          exit 0
+        }
+      }
+      exit 1
+    }
+  ' "$file" > "$output"
+}
+
+# Add the panel route at the start of the matching site's existing route block.
+caddy_add_panel_route() {
+  local file="$1" output="$2" domain="$3" base_path="$4" proxy_token="$5"
+  awk -v wanted="$domain" -v base="$base_path" -v token="$proxy_token" '
+    function trim(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    function strip_comment(s,    i, ch, quote, escaped, out) {
+      out = ""; quote = 0; escaped = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (escaped) { out = out ch; escaped = 0; continue }
+        if (ch == "\\" && quote) { out = out ch; escaped = 1; continue }
+        if (ch == "\"") { quote = !quote; out = out ch; continue }
+        if (ch == "#" && !quote && (i == 1 || substr(s, i - 1, 1) ~ /[[:space:]]/)) break
+        out = out ch
+      }
+      return out
+    }
+    function brace_delta(s,    i, ch, quote, escaped, n) {
+      s = strip_comment(s); quote = 0; escaped = 0; n = 0
+      for (i = 1; i <= length(s); i++) {
+        ch = substr(s, i, 1)
+        if (escaped) { escaped = 0; continue }
+        if (ch == "\\" && quote) { escaped = 1; continue }
+        if (ch == "\"") { quote = !quote; continue }
+        if (!quote && ch == "{") n++
+        if (!quote && ch == "}") n--
+      }
+      return n
+    }
+    function block_domain(s,    n, a, i, addr) {
+      s = trim(strip_comment(s))
+      if (s !~ /\{[[:space:]]*$/) return ""
+      sub(/[[:space:]]*\{[[:space:]]*$/, "", s)
+      n = split(s, a, ",")
+      for (i = 1; i <= n; i++) {
+        addr = trim(a[i])
+        sub(/^\"/, "", addr); sub(/\"$/, "", addr)
+        sub(/^https?:\/\//, "", addr)
+        if (addr == "" || addr ~ /^:/ || addr ~ /^\(/) continue
+        sub(/:[0-9]+$/, "", addr)
+        if (addr == wanted) return addr
+      }
+      return ""
+    }
+    { lines[NR] = $0 }
+    END {
+      depth = 0; in_site = 0; matches = 0; route_open = 0; route_close = 0
+      for (i = 1; i <= NR; i++) {
+        code = strip_comment(lines[i]); trimmed = trim(code)
+        if (depth == 0 && !in_site && block_domain(lines[i]) == wanted) {
+          in_site = 1; matches++
+        }
+        if (in_site && depth == 1 && trimmed ~ /^route[[:space:]]*\{[[:space:]]*$/) route_open = i
+        depth += brace_delta(lines[i])
+        if (in_site && depth == 0) in_site = 0
+      }
+      if (matches != 1 || route_open == 0) exit 1
+
+      nested = 0
+      for (i = route_open; i <= NR; i++) {
+        nested += brace_delta(lines[i])
+        if (nested == 0) { route_close = i; break }
+      }
+      if (route_close == 0) exit 1
+
+      panel_exists = 0
+      for (i = route_open + 1; i < route_close; i++) {
+        if (index(trim(strip_comment(lines[i])), "handle " base "/* {") == 1) panel_exists = 1
+      }
+
+      for (i = 1; i <= NR; i++) {
+        print lines[i]
+        if (i == route_open && !panel_exists) {
+          indent = lines[i]
+          sub(/[^ \t].*$/, "", indent)
+          print indent "\thandle " base "/* {"
+          print indent "\t\treverse_proxy 127.0.0.1:9000 {"
+          print indent "\t\t\theader_up X-NaivePanel-Key " token
+          print indent "\t\t}"
+          print indent "\t}"
+          print indent "\tredir " base " " base "/ 308"
+        }
+      }
+    }
+  ' "$file" > "$output"
+}
 
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
 command -v apt-get >/dev/null || die "仅支持 apt 系发行版（Debian / Ubuntu）"
@@ -73,7 +234,15 @@ read -rp "服务器域名（首个站点 & 面板寄宿域名）: " DOMAIN
 [[ -n "$DOMAIN" ]] || die "域名不能为空"
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "域名含非法字符（仅允许字母、数字、点、连字符）"
 
-DEFAULT_PATH="/manage-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+EXISTING_BASE_PATH=""
+if [[ -f "$PANEL_CONFIG" ]]; then
+  EXISTING_BASE_PATH="$(sed -n 's/^base_path:[[:space:]]*//p' "$PANEL_CONFIG" | head -n1 | tr -d "'\"")"
+fi
+if [[ "$EXISTING_BASE_PATH" =~ ^/[A-Za-z0-9/_-]+$ ]]; then
+  DEFAULT_PATH="$EXISTING_BASE_PATH"
+else
+  DEFAULT_PATH="/manage-$(head -c4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
 read -rp "面板访问路径 [${DEFAULT_PATH}]: " BASE_PATH
 BASE_PATH="${BASE_PATH:-$DEFAULT_PATH}"
 [[ "$BASE_PATH" == /* ]] || BASE_PATH="/$BASE_PATH"
@@ -99,6 +268,22 @@ ok "配置确认: 域名=$DOMAIN 路径=$BASE_PATH 账号=$ADMIN_USER"
 info "安装基础依赖..."
 apt-get update -qq
 apt-get install -y -qq curl wget tar cron gnupg lsb-release ca-certificates debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+# landscape-sysinfo is run by PAM as part of the post-login MOTD. Repair its
+# missing system Python dependency when Landscape is present; otherwise login
+# succeeds but prints a traceback before the shell prompt.
+if command -v landscape-sysinfo >/dev/null 2>&1 \
+  && ! /usr/bin/python3 -c 'import netifaces' >/dev/null 2>&1; then
+  info "检测到 landscape-sysinfo 无法导入 netifaces，修复系统 Python 与依赖包..."
+  # Reinstall python3-minimal as well: on a host whose /usr/bin/python3 was
+  # redirected to a non-distro interpreter, reinstalling only the extension
+  # leaves its ABI incompatible with the interpreter used by PAM.
+  if apt-get install -y -qq --reinstall python3-minimal python3-netifaces >/dev/null \
+    && /usr/bin/python3 -c 'import netifaces' >/dev/null 2>&1; then
+    ok "landscape-sysinfo 依赖已修复"
+  else
+    warn "landscape-sysinfo 仍无法导入 netifaces；检查 /usr/bin/python3 是否指向发行版默认 Python：readlink -f /usr/bin/python3；/usr/bin/python3 --version"
+  fi
+fi
 systemctl enable --now cron >/dev/null 2>&1 || true
 ok "基础依赖就绪"
 
@@ -329,8 +514,59 @@ mkdir -p "$PANEL_CONFIG_DIR" "$CADDY_SITES_DIR"
 chmod 700 "$PANEL_CONFIG_DIR"
 PASS_HASH="$(printf '%s\n' "$ADMIN_PASS" | "$PANEL_BIN" hash-password 2>/dev/null)"
 unset ADMIN_PASS ADMIN_PASS2
-# 面板 HTTPS 门禁共享密钥：Caddy 反代注入 header_up，面板拒绝无此头的请求
-PROXY_TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+# 面板 HTTPS 门禁共享密钥：Caddy 反代注入 header_up，面板拒绝无此头的请求。
+# 重跑安装时沿用现有值，避免已存在的面板路由因 token 轮换而失效。
+EXISTING_PROXY_TOKEN=""
+if [[ -f "$PANEL_CONFIG" ]]; then
+  EXISTING_PROXY_TOKEN="$(sed -n "s/^proxy_token:[[:space:]]*['\"]\?//p" "$PANEL_CONFIG" | head -n1 | sed "s/['\"].*$//")"
+fi
+if [[ "$EXISTING_PROXY_TOKEN" =~ ^[a-fA-F0-9]{48}$ ]]; then
+  PROXY_TOKEN="$EXISTING_PROXY_TOKEN"
+else
+  PROXY_TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
+
+# If the panel host already has a site block, preserve it and prepare the
+# merged block for raw_mode so a later panel Apply keeps the operator's routes.
+INSTALL_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$INSTALL_TMP_DIR"' EXIT
+PANEL_SITE_SOURCE=""
+PANEL_SITE_RAW_FILE=""
+PANEL_SITE_MERGED_FILE=""
+if [[ -f "$CADDYFILE" ]]; then
+  PANEL_SITE_RAW_FILE="$INSTALL_TMP_DIR/site.raw"
+  PANEL_SITE_MERGED_FILE="$INSTALL_TMP_DIR/Caddyfile.merged"
+  if caddy_site_block "$CADDYFILE" "$DOMAIN" "$INSTALL_TMP_DIR/site.original"; then
+    PANEL_SITE_SOURCE="$CADDYFILE"
+    caddy_add_panel_route "$CADDYFILE" "$PANEL_SITE_MERGED_FILE" "$DOMAIN" "$BASE_PATH" "$PROXY_TOKEN" \
+      || die "在 $CADDYFILE 中找到了 $DOMAIN，但没有唯一的 route 区块，无法安全插入面板反代配置"
+    caddy_site_block "$PANEL_SITE_MERGED_FILE" "$DOMAIN" "$PANEL_SITE_RAW_FILE" \
+      || die "无法从合并后的 $CADDYFILE 读取 $DOMAIN 站点块"
+    info "检测到现有 $DOMAIN 站点，将只在其 route 区块中插入面板反代配置"
+  else
+    PANEL_SITE_RAW_FILE=""
+    PANEL_SITE_MERGED_FILE=""
+  fi
+fi
+
+if [[ -n "$PANEL_SITE_RAW_FILE" ]]; then
+  SITE_CONFIG_YAML="$(cat <<EOF
+    raw_mode: true
+    raw: |
+$(sed 's/^/      /' "$PANEL_SITE_RAW_FILE")
+EOF
+)"
+else
+  SITE_CONFIG_YAML="$(cat <<EOF
+    forward_proxy:
+      enabled: false
+      accounts: []
+    web:
+      type: static
+      root: /var/www/$DOMAIN
+EOF
+)"
+fi
 
 if [[ -f "$PANEL_CONFIG" ]]; then
   warn "面板配置已存在，备份为 ${PANEL_CONFIG}.bak.$(date +%s)"
@@ -361,12 +597,7 @@ geo:
 backup_dir: $PANEL_CONFIG_DIR/backups
 sites:
   - domain: $DOMAIN
-    forward_proxy:
-      enabled: false
-      accounts: []
-    web:
-      type: static
-      root: /var/www/$DOMAIN
+$SITE_CONFIG_YAML
 EOF
 chmod 600 "$PANEL_CONFIG"
 ok "面板配置: $PANEL_CONFIG"
@@ -389,8 +620,9 @@ info "生成初始 Caddy 配置..."
 #   - 已是 NaivePanel 布局（上次安装留下的）：保留，下方只做增量补齐；
 #   - apt 刚装的官方包自带示例配置（:80 提供 /usr/share/caddy，未承载业务）：可安全替换；
 #   - 机器上本来就在跑的配置（含跳过编译的情形）：默认只增量修改 + 备份，绝不覆盖。
-CADDYFILE=/etc/caddy/Caddyfile
 CADDYFILE_BAK=""
+CADDYFILE_ORIGINALLY_EXISTED=0
+[[ -e "$CADDYFILE" ]] && CADDYFILE_ORIGINALLY_EXISTED=1
 write_caddyfile_skeleton() {
   cat > "$CADDYFILE" <<EOF
 {
@@ -414,6 +646,10 @@ is_stock_caddyfile() {
 if [[ ! -e "$CADDYFILE" ]] || ! grep -qE '[^[:space:]]' "$CADDYFILE"; then
   # 文件不存在或只有空白：直接写骨架
   write_caddyfile_skeleton
+elif [[ -n "$PANEL_SITE_SOURCE" ]]; then
+  # A matching host site must be kept so the panel route can be merged into it.
+  backup_caddyfile
+  ok "保留现有 $DOMAIN 站点及其他配置（备份 $CADDYFILE_BAK）"
 elif is_stock_caddyfile && [[ "$CADDY_DECISION" != "skip" ]]; then
   # 未改动过的官方示例配置：替换成骨架，无需询问
   backup_caddyfile
@@ -469,14 +705,20 @@ if [[ -f "$SNIPPET" ]]; then
   cp -a "$SNIPPET" "$SNIPPET_BAK"
 fi
 
-# 主配置里可能已经有该域名的站点块：Caddy 不允许同一地址出现两次，提前提示
-if grep -qE "(^|[[:space:],])${DOMAIN//./\\.}([[:space:],{]|$)" "$CADDYFILE"; then
-  warn "主配置 $CADDYFILE 中已经出现 ${DOMAIN}"
-  warn "若它是一个站点块，面板为同一域名写的片段会与其冲突（caddy validate 会报 duplicate site address）"
-  warn "可改用面板寄宿域名以外的域名，或先自行移走该块（原文件已备份）"
-fi
-cat > "$SNIPPET" <<EOF
-:443, $DOMAIN {
+PANEL_SITE_TARGET="$SNIPPET"
+if [[ "$PANEL_SITE_SOURCE" == "$CADDYFILE" ]]; then
+  # Insert only the panel route inside the existing site's route block.
+  caddy_add_panel_route "$CADDYFILE" "$INSTALL_TMP_DIR/Caddyfile.merged" "$DOMAIN" "$BASE_PATH" "$PROXY_TOKEN" \
+    || die "无法在 $CADDYFILE 的 $DOMAIN route 区块中插入面板反代配置"
+  cat "$INSTALL_TMP_DIR/Caddyfile.merged" > "$CADDYFILE"
+  PANEL_SITE_TARGET="$CADDYFILE"
+  # A previous failed install may have left a second host block in the import
+  # directory. It is backed up above and removed because the main block owns it.
+  rm -f "$SNIPPET"
+  ok "已将 NaivePanel 反代配置插入 $DOMAIN 的现有 route 区块"
+else
+  cat > "$SNIPPET" <<EOF
+$DOMAIN {
 	handle $BASE_PATH/* {
 		reverse_proxy 127.0.0.1:9000 {
 			header_up X-NaivePanel-Key $PROXY_TOKEN
@@ -489,6 +731,7 @@ cat > "$SNIPPET" <<EOF
 	file_server
 }
 EOF
+fi
 chmod 644 "$CADDYFILE"
 chmod 755 "$CADDY_SITES_DIR"
 
@@ -496,14 +739,16 @@ chmod 755 "$CADDY_SITES_DIR"
 # 0600 root:root 会让 caddy 在 import 时 permission denied 直接启动失败，
 # 而下面以 root 跑的 validate 却依然通过，所以这里显式给 root:caddy 0640。
 CADDY_SVC_USER="$(systemctl show caddy -p User --value 2>/dev/null || true)"
-if [[ -z "$CADDY_SVC_USER" || "$CADDY_SVC_USER" == "root" ]]; then
+if [[ "$PANEL_SITE_TARGET" == "$CADDYFILE" ]]; then
+  chmod 644 "$PANEL_SITE_TARGET"
+elif [[ -z "$CADDY_SVC_USER" || "$CADDY_SVC_USER" == "root" ]]; then
   chmod 644 "$SNIPPET"
 else
   chown root:"$CADDY_SVC_USER" "$SNIPPET" 2>/dev/null \
     && chmod 640 "$SNIPPET" \
     || chmod 644 "$SNIPPET"
 fi
-ok "站点片段权限: $(stat -c '%U:%G %a' "$SNIPPET")（caddy 服务用户: ${CADDY_SVC_USER:-root}）"
+ok "站点配置权限: $(stat -c '%U:%G %a' "$PANEL_SITE_TARGET")（caddy 服务用户: ${CADDY_SVC_USER:-root}）"
 
 # 关键：以 caddy 服务用户身份再校验一次。root 能读不代表 caddy 能读，
 # 只以 root 校验会漏掉权限问题，直到 systemd 启动失败才暴露。
@@ -518,10 +763,31 @@ validate_as_caddy_user() {
   fi
 }
 
-"$CADDY_BIN" validate --config "$CADDYFILE" --adapter caddyfile \
-  || die "初始 Caddy 配置校验失败，请检查 $CADDYFILE 与 $SNIPPET"
-validate_as_caddy_user \
-  || die "以 caddy 服务用户（${CADDY_SVC_USER}）校验失败：多半是 $CADDY_SITES_DIR 下片段/目录权限不足"
+restore_caddy_files_after_validation_failure() {
+  if [[ -n "${CADDYFILE_BAK:-}" && -f "$CADDYFILE_BAK" ]]; then
+    cp -a "$CADDYFILE_BAK" "$CADDYFILE"
+  elif [[ "${CADDYFILE_ORIGINALLY_EXISTED:-0}" -eq 0 ]]; then
+    rm -f "$CADDYFILE"
+  fi
+  # The old canonical snippet is intentionally left backed up, not restored,
+  # when its domain was moved into the existing main-file site block.
+  if [[ "$PANEL_SITE_SOURCE" != "$CADDYFILE" ]]; then
+    if [[ -n "${SNIPPET_BAK:-}" && -f "$SNIPPET_BAK" ]]; then
+      cp -a "$SNIPPET_BAK" "$SNIPPET"
+    elif [[ "$PANEL_SITE_TARGET" == "$SNIPPET" ]]; then
+      rm -f "$SNIPPET"
+    fi
+  fi
+}
+
+if ! "$CADDY_BIN" validate --config "$CADDYFILE" --adapter caddyfile; then
+  restore_caddy_files_after_validation_failure
+  die "初始 Caddy 配置校验失败，已恢复安装前主配置；请检查 $CADDYFILE 与 $PANEL_SITE_TARGET"
+fi
+if ! validate_as_caddy_user; then
+  restore_caddy_files_after_validation_failure
+  die "以 caddy 服务用户（${CADDY_SVC_USER}）校验失败，已恢复安装前配置；检查 $CADDY_SITES_DIR 下片段/目录权限"
+fi
 
 # 先 reload：跳过编译时 Caddy 正在对外服务，reload 不中断现有连接；不可用再 restart 兜底
 if ! systemctl reload caddy 2>/dev/null; then
@@ -536,7 +802,7 @@ if ! systemctl is-active --quiet caddy; then
     warn "回退主配置到安装前版本: $CADDYFILE_BAK"
     cp -a "$CADDYFILE_BAK" "$CADDYFILE"
   fi
-  if [[ -n "${SNIPPET_BAK:-}" && -f "$SNIPPET_BAK" ]]; then
+  if [[ "$PANEL_SITE_SOURCE" != "$CADDYFILE" && -n "${SNIPPET_BAK:-}" && -f "$SNIPPET_BAK" ]]; then
     warn "回退站点片段到安装前版本: $SNIPPET_BAK"
     cp -a "$SNIPPET_BAK" "$SNIPPET"
   fi
