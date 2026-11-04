@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ func TestAgentCoreLogsTemplate(t *testing.T) {
 			w := httptest.NewRecorder()
 			s.render(w, httptest.NewRequest("GET", s.Cfg.BasePath+"/agentcore/logs", nil), "agentcore_logs", "AgentCore 日志", map[string]any{"LogLines": lines, "LogContent": "journal <script>alert(1)</script>", "LogError": "error <script>"})
 			body := w.Body.String()
+			assertAgentCoreLogsLayout(t, body)
 			for _, want := range []string{"AgentCore 日志", `action="/manage-test/agentcore/logs"`, `href="/manage-test/agentcore"`, fmt.Sprintf(`value="%d" selected`, lines), "刷新", "返回 AgentCore", "journal &lt;script&gt;", "error &lt;script&gt;"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("missing %q", want)
@@ -33,6 +35,46 @@ func TestAgentCoreLogsTemplate(t *testing.T) {
 				t.Fatalf("unsafe or failed render: %d", w.Code)
 			}
 		})
+	}
+}
+
+func assertAgentCoreLogsLayout(t *testing.T, body string) {
+	t.Helper()
+	main := regexp.MustCompile(`(?s)<main>(.*?)</main>`).FindStringSubmatch(body)
+	if main == nil {
+		t.Fatal("missing rendered main content")
+	}
+	content := strings.TrimSpace(main[1])
+	if strings.Count(content, "<h1>") != 1 || !strings.Contains(content, "<h1>AgentCore 日志</h1>") {
+		t.Error("logs must have exactly one complete AgentCore 日志 heading")
+	}
+	header := regexp.MustCompile(`(?s)^<div class="editor-title"><a class="btn icon-btn" href="/manage-test/agentcore" title="返回 AgentCore" aria-label="返回 AgentCore">(.*?)</a><div><h1>AgentCore 日志</h1></div></div>`).FindStringSubmatch(content)
+	if header == nil {
+		t.Error("logs back icon must precede the heading in the left editor-title header")
+	} else {
+		assertNonemptySVG(t, header[1])
+		if !strings.Contains(header[1], iconSVGs["arrow-left"]) {
+			t.Error("logs back link must render arrow-left")
+		}
+	}
+	if strings.Count(content, `href="/manage-test/agentcore"`) != 1 || regexp.MustCompile(`>\s*返回(?: AgentCore)?\s*<`).MatchString(content) {
+		t.Error("logs must not have a duplicate or bottom text back button")
+	}
+	// Check the rendered fragment without browser HTML repair hiding broken tags.
+	var stack []string
+	for _, tag := range regexp.MustCompile(`</?([a-z][a-z0-9-]*)\b[^>]*>`).FindAllStringSubmatch(content, -1) {
+		name := tag[1]
+		if strings.HasPrefix(tag[0], "</") {
+			if len(stack) == 0 || stack[len(stack)-1] != name {
+				t.Fatalf("unbalanced logs tag %s; open tags: %v", tag[0], stack)
+			}
+			stack = stack[:len(stack)-1]
+		} else if !strings.HasSuffix(tag[0], "/>") && !strings.Contains(" area base br col embed hr img input link meta param source track wbr ", " "+name+" ") {
+			stack = append(stack, name)
+		}
+	}
+	if len(stack) != 0 {
+		t.Errorf("unclosed logs tags: %v", stack)
 	}
 }
 

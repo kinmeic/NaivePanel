@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>AgentCore 日</h1>志</h1>
+<div class="editor-title"><a class="btn icon-btn" href="{{.Base}}/agentcore" title="返回 AgentCore" aria-label="返回 AgentCore">{{icon "arrow-left"}}</a><div><h1>AgentCore 日志</h1></div></div>
 <div class="card">
   <form method="get" action="{{.Base}}/agentcore/logs" class="service-actions">
     <label for="agentcore-log-lines">日志行数</label>
@@ -10,7 +10,7 @@
       <option value="1000" {{if eq .Data.LogLines 1000}}selected{{end}}>1000</option>
     </select>
     <button type="submit" class="btn">{{icon "rotate-cw"}}刷新</button>
-    <a class="btn" href="{{.Base}}/agentcore">返回 AgentCore</a>
+
   </form>
   {{if .Data.LogError}}<p class="warning">{{.Data.LogError}}</p>{{end}}
   <pre class="logs">{{.Data.LogContent}}</pre>

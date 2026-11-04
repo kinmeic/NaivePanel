@@ -44,11 +44,13 @@
       <textarea id="agent-chat-input" rows="1" placeholder="输入消息…" disabled></textarea>
       <div class="agent-chat-composer-toolbar">
         <div class="agent-chat-composer-options">
-          <span id="agent-chat-settings" class="muted">模型 / 思考强度：读取配置中…</span>
-          <div class="agent-chat-context" tabindex="0" aria-label="上下文用量" aria-describedby="agent-chat-usage"><span id="agent-chat-ring" class="agent-chat-ring" aria-hidden="true"></span><span id="agent-chat-usage-label">上下文未知</span><div id="agent-chat-usage" class="agent-chat-usage" role="tooltip">等待服务用量数据</div></div>
           <select id="agent-chat-mode" aria-label="权限模式" aria-describedby="agent-chat-preference-note" disabled></select>
         </div>
-        <div class="agent-chat-buttons"><button id="agent-chat-stop" class="btn hidden" type="button" disabled>停止</button><button id="agent-chat-send" class="btn primary" type="submit" disabled>发送</button></div>
+        <div class="agent-chat-send-controls">
+          <span id="agent-chat-settings" class="muted">模型 / 思考强度：读取配置中…</span>
+          <div class="agent-chat-context" tabindex="0" aria-label="上下文用量" aria-describedby="agent-chat-usage"><span id="agent-chat-ring" class="agent-chat-ring" aria-hidden="true"></span><span id="agent-chat-usage-label">上下文未知</span><div id="agent-chat-usage" class="agent-chat-usage" role="tooltip">等待服务用量数据</div></div>
+          <div class="agent-chat-buttons"><button id="agent-chat-stop" class="btn hidden" type="button" disabled>停止</button><button id="agent-chat-send" class="btn primary" type="submit" disabled>发送</button></div>
+        </div>
       </div>
       <p id="agent-chat-preference-note" class="hidden"></p>
     </form>

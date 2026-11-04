@@ -29,23 +29,41 @@ function checkToolbar(source) {
   const nodes = all(composerTree(source));
   const toolbar = nodes.find(n => n.attrs?.class === 'agent-chat-composer-toolbar');
   assert.ok(toolbar, 'composer toolbar exists');
-  assert.deepEqual(toolbar.children.map(n => n.attrs.class), ['agent-chat-composer-options', 'agent-chat-buttons']);
-  assert.deepEqual(toolbar.children[1].children.map(n => n.attrs.id), ['agent-chat-stop', 'agent-chat-send']);
+  assert.deepEqual(toolbar.children.map(n => n.attrs.class), ['agent-chat-composer-options', 'agent-chat-send-controls']);
   const options = toolbar.children[0].children;
-  assert.deepEqual(options.map(n => n.attrs.id || n.attrs.class || n.attrs.for), ['agent-chat-settings', 'agent-chat-context', 'agent-chat-mode']);
-  assert.equal(options[0].tag, 'span', 'model and effort are plain text');
-  assert.equal(options[0].children.length, 0);
-  assert.equal(options[2].tag, 'select');
-  assert.equal(options[2].attrs['aria-label'], '权限模式');
+  assert.deepEqual(options.map(n => n.attrs.id), ['agent-chat-mode']);
+  assert.equal(options[0].tag, 'select');
+  assert.equal(options[0].attrs['aria-label'], '权限模式');
+  const controls = toolbar.children[1].children;
+  assert.deepEqual(controls.map(n => n.attrs.id || n.attrs.class), ['agent-chat-settings', 'agent-chat-context', 'agent-chat-buttons']);
+  assert.deepEqual(controls.map(n => n.tag), ['span', 'div', 'div']);
+  assert.equal(controls[0].children.length, 0, 'model and effort are plain text');
+  assert.deepEqual(controls[2].children.map(n => n.attrs.id), ['agent-chat-stop', 'agent-chat-send']);
 }
 
-test('composer toolbar has settings text, context and mode on left, actions on right', () => {
+test('composer toolbar has only mode on left, settings, context and actions on right', () => {
   checkToolbar(template);
+});
+
+test('toolbar CSS keeps mode left and send controls right', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../ui/static/agentcore-chat.css'), 'utf8');
+  function rule(selector) {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = css.match(new RegExp(escaped + '\\s*\\{([^}]+)\\}'));
+    assert.ok(match, `missing CSS rule ${selector}`);
+    return Object.fromEntries(match[1].split(';').filter(Boolean).map(declaration => declaration.split(':').map(s => s.trim())));
+  }
+  assert.equal(rule('.agent-chat-composer-toolbar').display, 'flex');
+  assert.equal(rule('.agent-chat-composer-options')['justify-content'], 'flex-start');
+  const controls = rule('.agent-chat-send-controls');
+  assert.equal(controls.display, 'flex');
+  assert.equal(controls['justify-content'], 'flex-end');
+  assert.equal(controls['margin-left'], 'auto');
 });
 
 test('chat template has no effort selector or keyboard shortcut hint', () => {
   assert.doesNotMatch(template, /agent-chat-effort|<select\b[^>]*(?:id|name)="[^"]*effort/i);
-  assert.doesNotMatch(template, /<kbd\b|Ctrl|Control|Cmd|Command|⌘|快捷键|Enter|回车/i);
+  assert.doesNotMatch(template, /<kbd\b|\b(?:Ctrl|Control|Cmd|Command|Enter)\b|⌘|快捷键|回车/i);
   const nodes = all(composerTree(template));
   assert.deepEqual(nodes.filter(n => n.tag === 'select').map(n => n.attrs.id), ['agent-chat-mode']);
 });
@@ -60,9 +78,12 @@ test('composer starts idle with send visible and stop hidden', () => {
   }
 });
 
-test('toolbar validation rejects reordered options and interactive settings', () => {
+test('toolbar validation rejects misplaced controls and interactive settings', () => {
   const settings = template.match(/<span id="agent-chat-settings"[^>]*>[\s\S]*?<\/span>/)[0];
   const mode = template.match(/<select id="agent-chat-mode"[^>]*>[\s\S]*?<\/select>/)[0];
   assert.throws(() => checkToolbar(template.replace(settings, '<!-- settings slot -->').replace(mode, settings).replace('<!-- settings slot -->', mode)));
   assert.throws(() => checkToolbar(template.replace(settings, settings.replace('<span', '<button').replace('</span>', '</button>'))));
+  const context = template.match(/<div class="agent-chat-context"[^>]*>[\s\S]*?<\/div><\/div>/)[0];
+  assert.throws(() => checkToolbar(template.replace(settings, '<!-- settings slot -->').replace(context, settings).replace('<!-- settings slot -->', context)));
+  assert.throws(() => checkToolbar(template.replace('class="agent-chat-send-controls"', 'class="agent-chat-buttons"')));
 });

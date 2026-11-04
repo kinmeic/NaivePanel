@@ -7,10 +7,12 @@ import "html/template"
 // server-side so they paint with the first frame — no JS icon swap, no flash.
 var iconSVGs = map[string]string{
 	"activity":            `<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>`,
+	"arrow-down":          `<path d="M12 5v14"/><path d="m5 12 7 7 7-7"/>`,
 	"arrow-left":          `<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>`,
 	"arrow-up-circle":     `<circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/>`,
 	"check":               `<path d="M20 6 9 17l-5-5"/>`,
 	"clock-3":             `<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16.5 12"/>`,
+	"copy":                `<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`,
 	"cpu":                 `<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/>`,
 	"download":            `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>`,
 	"file-cog":            `<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="m3.2 12.9-.9-.4"/><path d="m3.2 15.1-.9.4"/><path d="M4.677 21.5a2 2 0 0 0 1.313.5H18a2 2 0 0 0 2-2V7l-5-5H6a2 2 0 0 0-2 2v2.5"/><path d="m4.9 11.2-.4-.9"/><path d="m4.9 16.8-.4.9"/><path d="m7.5 10.3-.4.9"/><path d="m7.5 17.7-.4-.9"/><path d="m9.7 12.5-.9.4"/><path d="m9.7 15.5-.9-.4"/><circle cx="6" cy="14" r="3"/>`,
