@@ -4,7 +4,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const core = require('../ui/static/agentcore-chat-core.js');
 class Node {
-  constructor(tag = '') { this.tag = tag; this.children = []; this.attrs = {}; this.events = {}; this.dataset = {}; this.value = ''; this.style = { setProperty() {} }; this.classList = { contains: name => (this.className || '').split(/\s+/).includes(name), toggle: (name, force) => { const classes = new Set((this.className || '').split(/\s+/).filter(Boolean)); const add = force === undefined ? !classes.has(name) : force; if (add) classes.add(name); else classes.delete(name); this.className = [...classes].join(' '); return add; } }; this.scrollHeight = 0; this.scrollTop = 0; this.clientHeight = 0; }
+  constructor(tag = '') { this.tag = tag; this.children = []; this.attrs = {}; this.events = {}; this.dataset = {}; this._value = ''; this.style = { setProperty() {} }; this.classList = { contains: name => (this.className || '').split(/\s+/).includes(name), toggle: (name, force) => { const classes = new Set((this.className || '').split(/\s+/).filter(Boolean)); const add = force === undefined ? !classes.has(name) : force; if (add) classes.add(name); else classes.delete(name); this.className = [...classes].join(' '); return add; } }; this.scrollHeight = 0; this.scrollTop = 0; this.clientHeight = 0; }
+  set value(value) { this._value = String(value); }
+  get value() { return this.tag === 'select' && !this.children.some(n => n.value === this._value) ? '' : this._value; }
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return (this.text || '') + this.children.map(n => n.textContent).join(''); }
   appendChild(n) { if (n.tag === '#fragment') { for (const c of n.children) this.appendChild(c); return n; } n.parent = this; this.children.push(n); return n; }
@@ -13,7 +15,7 @@ class Node {
   setAttribute(k, v) { this.attrs[k] = v; }
   addEventListener(k, f) { this.events[k] = f; }
   querySelectorAll(selector) { return this.children.flatMap(n => ((selector[0] === '.' ? n.classList.contains(selector.slice(1)) : n.tag === selector) ? [n] : []).concat(n.querySelectorAll(selector))); }
-  querySelector(selector) { if (selector[0] === '.') return null; return this.querySelectorAll(selector)[0]; }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   focus() {}
 }
 function documentMock() { return { addEventListener() {}, createElementNS: (_, t) => new Node(t), createElement: t => new Node(t), createTextNode: t => { const n = new Node('#text'); n.textContent = t; return n; }, createDocumentFragment: () => new Node('#fragment') }; }
@@ -134,7 +136,8 @@ function harness(override, confirm = () => false) {
     node.className = match[0].match(/\bclass="([^"]*)"/)?.[1] || '';
     node.disabled = /\sdisabled\b/.test(match[0]);
   }
-  doc.getElementById = id => nodes[id] || null;
+  delete nodes['agent-chat-status'];
+    doc.getElementById = id => nodes[id] || null;
   const root = doc.getElementById('agent-chat'); root.dataset = { enabled: 'true', csrf: 'csrf-test', api: '/panel/agentcore/api' };
   const response = data => ({ ok: true, json: async () => data });
   const fetch = async (url, init) => {
@@ -178,12 +181,12 @@ test('streamed usage estimates from cumulative prompt and prefers reported conte
   const h = harness(); await tick(); h.el('input').value = 'task';
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   h.emit({ type: 'thinking', usage: { prompt_tokens: 25, completion_tokens: 5 } }); await tick();
-  assert.equal(h.el('usage-label').textContent, '25.0% 输入估算');
+  assert.equal(h.el('usage-label').textContent, '25.0%');
   assert.match(h.el('usage').textContent, /累计输入会叠加多次模型调用，不是精确当前占用/);
   h.emit({ type: 'chunk', content: 'ok', usage: { prompt_tokens: 900, context_tokens: 40 } }); await tick();
-  assert.equal(h.el('usage-label').textContent, '40.0% 后端报告参考');
+  assert.equal(h.el('usage-label').textContent, '40.0%');
   h.emit({ type: 'done', reply: 'ok', usage: { prompt_tokens: 250 } }); await run;
-  assert.equal(h.el('usage-label').textContent, '100.0% 输入估算');
+  assert.equal(h.el('usage-label').textContent, '100.0%');
   assert.match(h.el('usage').textContent, /累计输入：250/);
   assert.equal(core.usage({}, { context_window: 100 }).percent, null);
   assert.equal(core.usage({ prompt_tokens: -1 }, { context_window: 100 }).percent, null);
@@ -234,7 +237,7 @@ test('real stream contract: first-turn ID enables stop, approval uses request_id
   await h.el('stop').events.click();
   assert.ok(h.calls.some(c => c.url.endsWith('/chat/conv-first/stop')));
   h.emit({ type: 'cancelled', conversation_id: 'conv-first' }); await run;
-  assert.match(h.el('status').textContent, /已停止/);
+  assert.equal(h.el('status'), null);
   const posts = h.calls.filter(c => c.init.method === 'POST');
   assert.ok(posts.every(c => c.init.headers['X-CSRF-Token'] === 'csrf-test'));
   assert.ok(!h.calls.some(c => c.url.endsWith('/chat')));
@@ -260,14 +263,14 @@ test('EOF before terminal event warns that the backend may still be running', as
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   h.emit({ type: 'conv_id', conversation_id: 'running' }); await tick(); h.close(); await run;
   assert.match(h.el('error').textContent, /后台继续/);
-  assert.match(h.el('status').textContent, /未确认/);
+  assert.equal(h.el('status'), null);
 });
 test('new conversation inherits service effort, sends only selected mode and locks mode after first ID', async () => {
   const h = harness(undefined, () => true); await tick();
   assert.equal(h.el('mode').value, 'build'); // Even when /options says yolo.
   assert.equal(h.el('effort'), null);
   assert.equal(h.el('settings').tag, 'span');
-  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：high');
+  assert.equal(h.el('settings').textContent, 'actual · high');
   assert.equal(h.el('settings').children.length, 0);
   h.el('mode').value = 'edit'; h.el('mode').events.change();
   h.el('input').value = 'task'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
@@ -276,12 +279,12 @@ test('new conversation inherits service effort, sends only selected mode and loc
   assert.equal(Object.hasOwn(body, 'effort'), false);
   h.emit({ type: 'conv_id', conversation_id: 'new-session' }); await tick();
   assert.equal(h.el('mode').disabled, true);
-  assert.match(h.el('preference-note').title, /新建会话/);
+  assert.match(h.el('preference-note').title, /运行中不可修改/);
   h.emit({ type: 'done', reply: 'done' }); await run;
   h.el('new').events.click(); assert.equal(h.el('mode').value, 'build');
   assert.equal(h.el('mode').disabled, false);
   assert.equal(h.el('effort'), null);
-  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：high');
+  assert.equal(h.el('settings').textContent, 'actual · high');
 });
 test('high-risk modes require explicit confirmation and cancellation keeps build', async () => {
   const prompts = [], h = harness(undefined, message => { prompts.push(message); return false; }); await tick();
@@ -291,7 +294,7 @@ test('high-risk modes require explicit confirmation and cancellation keeps build
   assert.equal(JSON.parse(h.calls.find(c => c.url.endsWith('/chat/stream')).init.body).metadata.mode, 'build');
   h.emit({ type: 'done', reply: 'done' }); await run;
 });
-test('history restores metadata read-only, prioritizes context_tokens and never overwrites metadata on follow-up', async () => {
+test('history restores editable metadata, prioritizes context_tokens and never overwrites metadata on follow-up', async () => {
   const response = data => Promise.resolve({ ok: true, json: async () => data });
   const metadata = { effort: 'medium', mode: 'plan', model: 'custom-model', locale: 'zh-CN', goal: 'keep' };
   const h = harness(url => {
@@ -300,14 +303,105 @@ test('history restores metadata read-only, prioritizes context_tokens and never 
     if (url.endsWith('/conversations/saved/logs')) return response([{ role: 'assistant', content: 'history', prompt_tokens: 900, context_tokens: 25 }]);
   }); await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
   assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'plan');
-  assert.equal(h.el('settings').textContent, '模型：custom-model · 思考强度：medium');
+  assert.equal(h.el('settings').textContent, 'custom-model · medium');
   assert.equal(h.el('settings').tag, 'span'); assert.equal(h.el('settings').children.length, 0);
-  assert.equal(h.el('mode').disabled, true); assert.match(h.el('settings').textContent, /custom-model/);
+  assert.equal(h.el('mode').disabled, false); assert.match(h.el('settings').textContent, /custom-model/);
   assert.match(h.el('usage-label').textContent, /25.0%/); assert.match(h.el('usage').textContent, /累计输入：900/);
   h.el('input').value = 'followup'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   const body = JSON.parse(h.calls.find(c => c.url.endsWith('/chat/stream')).init.body);
   assert.equal(body.conversation_id, 'saved'); assert.equal(body.metadata, undefined);
   h.emit({ type: 'done', reply: 'done' }); await run;
+});
+test('history without mode has a real inherited option and all permission options are visible', async () => {
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'legacy' }]);
+    if (url.endsWith('/conversations/legacy')) return jsonResponse({ id: 'legacy', metadata: {} });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+  });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  const select = h.el('mode');
+  assert.equal(select.disabled, false); assert.equal(select.value, '');
+  assert.deepEqual(select.children.map(n => n.value), ['plan', 'build', 'edit', 'guarded', 'yolo', '']);
+  assert.ok(select.children.every(n => n.textContent));
+  assert.match(select.children.at(-1).textContent, /继承服务默认（yolo）/);
+});
+for (const outcome of ['success', 'http failure', 'unconfirmed']) test('history permission update: ' + outcome, async () => {
+  const metadata = { mode: 'plan', model: 'custom', effort: 'low', goal: 'keep', locale: 'zh-CN' };
+  let finish;
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+    if (url.endsWith('/preferences')) return new Promise(resolve => { finish = resolve; });
+  });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  h.el('mode').value = 'build'; const change = h.el('mode').events.change();
+  assert.equal(h.el('mode').disabled, true); assert.equal(h.el('input').disabled, true);
+  const post = h.calls.find(c => c.url.endsWith('/preferences'));
+  assert.equal(post.init.method, 'POST'); assert.equal(post.init.headers['X-CSRF-Token'], 'csrf-test');
+  assert.deepEqual(JSON.parse(post.init.body), { mode: 'build' });
+  finish(outcome === 'http failure' ? { ok: false, status: 409, json: async () => ({ error: 'active run' }) } : jsonResponse({ id: 'saved', metadata: outcome === 'success' ? { ...metadata, mode: 'build' } : metadata }));
+  await change;
+  assert.equal(h.el('mode').disabled, false);
+  assert.equal(h.el('mode').value, outcome === 'success' ? 'build' : 'plan');
+  assert.equal(h.el('settings').textContent, 'custom · low');
+  if (outcome !== 'success') assert.match(h.el('error').textContent, /权限模式更新失败/);
+  assert.ok(!h.calls.some(c => c.url.endsWith('/chat/stream')));
+  h.el('input').value = 'next'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+  const body = JSON.parse(h.calls.find(c => c.url.endsWith('/chat/stream')).init.body);
+  assert.equal(body.conversation_id, 'saved'); assert.equal(body.metadata, undefined);
+  h.emit({ type: 'done', reply: 'done' }); await run;
+});
+test('history high-risk changes require confirmation and active runs disable changes', async () => {
+  let accept = false, confirms = 0, active = false;
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata: { mode: 'plan' } });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+    if (url.endsWith('/runs?limit=100')) return jsonResponse(active ? [{ status: 'running' }] : []);
+    if (url.endsWith('/preferences')) return jsonResponse({ id: 'saved', metadata: { mode: 'yolo', goal: 'keep' } });
+  }, () => { confirms++; return accept; });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  for (const mode of ['edit', 'guarded', 'yolo']) {
+    h.el('mode').value = mode; await h.el('mode').events.change();
+    assert.equal(h.el('mode').value, 'plan');
+  }
+  assert.equal(confirms, 3); assert.ok(!h.calls.some(c => c.url.endsWith('/preferences')));
+  accept = true; h.el('mode').value = 'yolo'; await h.el('mode').events.change();
+  assert.equal(h.el('mode').value, 'yolo'); assert.equal(confirms, 4);
+  active = true; await h.advance(30000);
+  assert.equal(h.el('mode').disabled, true);
+  const count = h.calls.length; h.el('mode').value = 'build'; await h.el('mode').events.change();
+  assert.equal(h.calls.length, count); assert.equal(h.el('mode').value, 'yolo');
+});
+test('message bubbles have no sender or timestamp and copy icons stay below the article', async () => {
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata: {} });
+    if (url.endsWith('/logs')) return jsonResponse([
+      { role: 'user', content: 'question', created_at: '2026-01-01T00:00:00Z' },
+      { role: 'assistant', content: 'answer', actions: [{ tool: 'read' }] }
+    ]);
+  });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  assert.equal(h.el('status'), null);
+  const wraps = h.el('messages').querySelectorAll('.agent-chat-message-wrap');
+  assert.equal(wraps.length, 2); assert.ok(wraps[0].classList.contains('agent-chat-user'));
+  assert.ok(wraps[1].classList.contains('agent-chat-assistant'));
+  for (const wrap of wraps) {
+    const [article, button] = wrap.children;
+    assert.equal(article.tag, 'article'); assert.equal(button.tag, 'button');
+    assert.equal(article.querySelectorAll('button').length, 0);
+    assert.equal(article.querySelectorAll('time').length, 0);
+    assert.equal(article.querySelectorAll('.agent-chat-message-head').length, 0);
+    const svg = button.querySelector('svg'); assert.ok(svg);
+    assert.equal(button.attrs['aria-label'], '复制完整消息');
+    await button.events.click(); assert.equal(button.title, '已复制'); assert.equal(button.querySelector('svg'), svg);
+  }
+  assert.equal(wraps[1].children[0].querySelectorAll('details').length, 1);
+  assert.equal(h.copied[0], 'question'); assert.match(h.copied[1], /answer\n\n工具执行记录/);
+  h.timers.forEach(fn => fn());
+  assert.ok(wraps.every(w => w.children[1].title === '复制消息' && w.children[1].querySelector('svg')));
 });
 test('restored high-risk permissions still require confirmation before sending', async () => {
   const response = data => Promise.resolve({ ok: true, json: async () => data }); let confirms = 0;
@@ -333,7 +427,7 @@ test('stale detail metadata cannot overwrite a newer conversation or its context
   buttons[0].events.click(); await tick(); buttons[1].events.click(); await tick();
   resolveA(response({ id: 'a', metadata: { effort: 'high', mode: 'yolo' } })); await tick();
   assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'plan');
-  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：low');
+  assert.equal(h.el('settings').textContent, 'actual · low');
   assert.match(h.el('usage-label').textContent, /10.0%/);
 });
 test('failed conversation detail does not invent restored preferences', async () => {
@@ -344,7 +438,7 @@ test('failed conversation detail does not invent restored preferences', async ()
     if (url.endsWith('/conversations/saved/logs')) return response([]);
   }); await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
   assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'unknown');
-  assert.equal(h.el('settings').textContent, '模型：未知 · 思考强度：未知');
+  assert.equal(h.el('settings').textContent, '未知 · 未知');
   assert.match(h.el('settings').textContent, /未知/); assert.match(h.el('error').textContent, /未确认当前设置/);
 });
 test('full-message copy uses latest streamed raw Markdown and resets the correct button label', async () => {
@@ -356,7 +450,7 @@ test('full-message copy uses latest streamed raw Markdown and resets the correct
   await copies[1].events.click(); assert.equal(h.copied[1], '**partial**');
   h.emit({ type: 'done', reply: '# Final\n```js\nconst x = 1;\n```' }); await run;
   await copies[1].events.click(); assert.equal(h.copied[2], '# Final\n```js\nconst x = 1;\n```');
-  h.timers.forEach(fn => fn()); assert.equal(copies[1].textContent, '复制消息');
+  h.timers.forEach(fn => fn()); assert.equal(copies[1].title, '复制消息'); assert.equal(copies[1].querySelectorAll('svg').length, 1);
 });
 function retryStream(runID = 'run-1') {
   let controller, cancelled = false;
@@ -380,7 +474,7 @@ test('network recovery uses GET after successful sequence, deduplicates text and
   const copyButtons = h.el('messages').querySelectorAll('button').filter(b => b.dataset.copyLabel === '复制消息');
   await copyButtons[1].events.click(); assert.equal(h.copied.at(-1), 'Hello world');
   second.emit({ type: 'done', sequence: 3 }); await run;
-  assert.equal(h.el('error').textContent, ''); assert.equal(h.el('status').textContent, '本轮已完成'); onlyOneSubmission(h); assertComposerBusy(h, false);
+  assert.equal(h.el('error').textContent, ''); assert.equal(h.el('status'), null); onlyOneSubmission(h); assertComposerBusy(h, false);
 });
 
 test('event run_id recovers without header and preserves tools and pending approval across replay', async () => {
@@ -498,7 +592,7 @@ test('server error event is not presented as completion', async () => {
   const h = harness(); await tick(); h.el('input').value = 'hello';
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   h.emit({ type: 'error', message: 'run failed' }); await run;
-  assert.equal(h.el('status').textContent, '运行失败'); assert.match(h.el('error').textContent, /run failed/);
+  assert.equal(h.el('status'), null); assert.match(h.el('error').textContent, /run failed/);
 });
 
 const jsonResponse = data => ({ ok: true, json: async () => data });
@@ -519,30 +613,44 @@ test('history dots use real runs, prefer active and do not retain an older failu
   h.pagehide(); assert.equal(h.activeTimers.size, 0);
 });
 
-for (const outcome of ['cancel', 'success', 'fail']) test('archive confirmation ' + outcome, async () => {
+for (const outcome of ['cancel', 'success', 'fail', 'conflict', 'archived', 'missing-status']) test('permanent deletion confirmation ' + outcome, async () => {
   let prompts = 0, resolveDelete;
   const h = harness(url => {
     if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
     if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved' });
     if (url.endsWith('/logs')) return jsonResponse([]);
     if (url.endsWith('/delete')) return new Promise(resolve => { resolveDelete = resolve; });
-  }, text => { prompts++; assert.match(text, /移出历史列表/); assert.match(text, /相关消息仍保留/); return outcome !== 'cancel'; });
+  }, text => { prompts++; assert.match(text, /永久删除/); assert.match(text, /会话/); assert.match(text, /消息/); assert.match(text, /不可恢复/); assert.doesNotMatch(text, /仍保留/); return outcome !== 'cancel'; });
   await tick(); const row = sessionRows(h)[0]; await row.children[1].events.click(); await tick();
-  assert.equal(h.el('status').textContent, '');
+  assert.equal(h.el('status'), null);
   const action = row.children[2].events.click();
-  if (outcome === 'cancel') { await action; assert.equal(resolveDelete, undefined); }
+  if (outcome === 'cancel') {
+      await action; assert.equal(resolveDelete, undefined);
+      assert.equal(sessionRows(h).length, 1); assert.equal(h.el('title').textContent, '历史会话');
+      assert.equal(h.calls.filter(c => c.url.endsWith('/delete')).length, 0);
+    }
   else {
     await row.children[2].events.click(); assert.equal(prompts, 1);
     const call = h.calls.find(c => c.url.endsWith('/delete'));
     assert.equal(call.init.body, '{}'); assert.equal(call.init.headers['X-CSRF-Token'], 'csrf-test');
-    resolveDelete(outcome === 'success' ? jsonResponse({ status: 'archived' }) : { ok: false, status: 409, json: async () => ({ error: 'active' }) }); await action;
+    assert.equal(call.init.method, 'POST');
+        assert.equal(h.calls.filter(c => c.url.endsWith('/delete')).length, 1);
+        const status = outcome === 'conflict' ? 409 : 500;
+        resolveDelete(outcome === 'success' ? jsonResponse({ status: 'deleted' })
+          : outcome === 'archived' ? jsonResponse({ status: 'archived' })
+          : outcome === 'missing-status' ? jsonResponse({})
+          : { ok: false, status, json: async () => ({ error: outcome === 'conflict' ? 'active' : 'internal' }) }); await action;
     if (outcome === 'success') { assert.equal(sessionRows(h).length, 0); assert.equal(h.el('title').textContent, '新会话'); }
-    else { assert.equal(sessionRows(h).length, 1); assert.equal(h.el('title').textContent, '历史会话'); assert.match(h.el('error').textContent, /409/); }
+    else {
+          assert.equal(sessionRows(h).length, 1); assert.equal(h.el('title').textContent, '历史会话');
+          assert.ok(h.el('error').textContent);
+          if (outcome === 'fail' || outcome === 'conflict') assert.match(h.el('error').textContent, new RegExp(String(status)));
+        }
   }
   h.pagehide();
 });
 
-test('status query failure stays unknown and disables archive', async () => {
+test('status query failure stays unknown and disables deletion', async () => {
   const h = harness(url => {
     if (url.endsWith('/conversations')) return jsonResponse([{ id: 'x' }]);
     if (url.includes('/runs?')) return Promise.reject(new Error('offline'));

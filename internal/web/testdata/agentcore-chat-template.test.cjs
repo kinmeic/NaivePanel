@@ -29,17 +29,17 @@ function checkToolbar(source) {
   const nodes = all(composerTree(source));
   const toolbar = nodes.find(n => n.attrs?.class === 'agent-chat-composer-toolbar');
   assert.ok(toolbar, 'composer toolbar exists');
-  assert.deepEqual(toolbar.children.map(n => n.attrs.class), ['agent-chat-buttons', 'agent-chat-composer-options']);
-  assert.deepEqual(toolbar.children[0].children.map(n => n.attrs.id), ['agent-chat-stop', 'agent-chat-send']);
-  const options = toolbar.children[1].children;
+  assert.deepEqual(toolbar.children.map(n => n.attrs.class), ['agent-chat-composer-options', 'agent-chat-buttons']);
+  assert.deepEqual(toolbar.children[1].children.map(n => n.attrs.id), ['agent-chat-stop', 'agent-chat-send']);
+  const options = toolbar.children[0].children;
   assert.deepEqual(options.map(n => n.attrs.id || n.attrs.class || n.attrs.for), ['agent-chat-settings', 'agent-chat-context', 'agent-chat-mode']);
   assert.equal(options[0].tag, 'span', 'model and effort are plain text');
   assert.equal(options[0].children.length, 0);
-  assert.equal(options[2].tag, 'label');
-  assert.deepEqual(options[2].children.map(n => [n.tag, n.attrs.id]), [['select', 'agent-chat-mode']]);
+  assert.equal(options[2].tag, 'select');
+  assert.equal(options[2].attrs['aria-label'], '权限模式');
 }
 
-test('composer toolbar has left actions and right settings text, context, mode in order', () => {
+test('composer toolbar has settings text, context and mode on left, actions on right', () => {
   checkToolbar(template);
 });
 
@@ -62,7 +62,7 @@ test('composer starts idle with send visible and stop hidden', () => {
 
 test('toolbar validation rejects reordered options and interactive settings', () => {
   const settings = template.match(/<span id="agent-chat-settings"[^>]*>[\s\S]*?<\/span>/)[0];
-  const mode = template.match(/<label for="agent-chat-mode"[^>]*>[\s\S]*?<\/label>/)[0];
+  const mode = template.match(/<select id="agent-chat-mode"[^>]*>[\s\S]*?<\/select>/)[0];
   assert.throws(() => checkToolbar(template.replace(settings, '<!-- settings slot -->').replace(mode, settings).replace('<!-- settings slot -->', mode)));
   assert.throws(() => checkToolbar(template.replace(settings, settings.replace('<span', '<button').replace('</span>', '</button>'))));
 });

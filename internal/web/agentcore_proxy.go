@@ -121,8 +121,8 @@ func agentCoreRoute(method, path string) (string, bool) {
 	return "", false
 }
 
-// The upstream archive endpoint has no active-run guard. This preflight is
-// conservative, but cannot atomically exclude a concurrently started run.
+// Preference changes need a conservative active-run preflight. Permanent
+// deletion uses the upstream endpoint's atomic chat/workflow guard instead.
 func agentCoreDeletionReady(w http.ResponseWriter, r *http.Request, target *url.URL, token, path string) bool {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -168,7 +168,7 @@ func agentCoreDeletionReady(w http.ResponseWriter, r *http.Request, target *url.
 	}
 	// ConversationRuns has a hard limit of 500 and no pagination.
 	if len(runs) >= 500 {
-		http.Error(w, "Cannot safely archive conversation: run history limit reached", http.StatusConflict)
+		http.Error(w, "Cannot safely modify conversation: run history limit reached", http.StatusConflict)
 		return false
 	}
 	return true
@@ -231,9 +231,7 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 		r.ContentLength = int64(len(body))
 	}
 	deleting := r.Method == http.MethodPost && strings.HasPrefix(path, "/v1/conversations/")
-	if deleting && !agentCoreDeletionReady(w, r, target, token, path) {
-		return
-	}
+
 	proxy := &httputil.ReverseProxy{
 		Transport:     agentCoreTransport,
 		FlushInterval: -1,
@@ -249,6 +247,9 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 				pr.Out.TransferEncoding = nil
 			}
 			query := url.Values{}
+			if deleting {
+				query.Set("permanent", "true")
+			}
 			if path == "/v1/conversations" {
 				for _, key := range []string{"source", "limit", "offset"} {
 					if values, exists := pr.In.URL.Query()[key]; exists {

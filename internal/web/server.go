@@ -219,6 +219,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+bp+"/agentcore/api/conversations/{id}/logs", s.protect(s.handleAgentCoreAPI))
 	s.mux.HandleFunc("GET "+bp+"/agentcore/api/conversations/{id}/runs", s.protect(s.handleAgentCoreAPI))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/api/conversations/{id}/delete", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/api/conversations/{id}/preferences", s.protect(s.handleAgentCorePreferences))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/api/chat", s.protect(s.handleAgentCoreAPI))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/api/chat/stream", s.protect(s.handleAgentCoreAPI))
 	s.mux.HandleFunc("GET "+bp+"/agentcore/api/runs/{id}/events/stream", s.protect(s.handleAgentCoreAPI))

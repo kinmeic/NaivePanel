@@ -35,60 +35,97 @@ func agentCoreProxyServer(t *testing.T, upstream string) *Server {
 
 func TestAgentCoreDeleteConversation(t *testing.T) {
 	for _, tc := range []struct {
-		name, runs                      string
-		checkStatus, deleteStatus, want int
+		name   string
+		status int
+		body   string
 	}{
-		{"empty", `[]`, 200, 200, 200},
-		{"null", `null`, 200, 200, 200},
-		{"terminal", `[{"status":"completed"},{"status":"failed"},{"status":"cancelled"}]`, 200, 200, 200},
-		{"pending", `[{"status":"pending"}]`, 200, 200, 409},
-		{"running", `[{"status":"running"}]`, 200, 200, 409},
-		{"clarify", `[{"status":"waiting_clarification"}]`, 200, 200, 409},
-		{"approval", `[{"status":"waiting_approval"}]`, 200, 200, 409},
-		{"unknown", `[{"status":"new-state"}]`, 200, 200, 502},
-		{"nil run", `[null]`, 200, 200, 502},
-		{"malformed", `{}`, 200, 200, 502},
-		{"trailing", `[] {}`, 200, 200, 502},
-		{"unavailable", `[]`, 503, 200, 502},
-		{"redirect", `[]`, 307, 200, 502},
-		{"history cap", `[` + strings.Repeat(`{"status":"completed"},`, 499) + `{"status":"completed"}]`, 200, 200, 409},
-		{"delete conflict", `[]`, 200, 409, 409},
-		{"delete failure", `[]`, 200, 500, 500},
-		{"delete missing", `[]`, 200, 404, 404},
+		{"deleted", 200, `{"status":"deleted"}`},
+		{"invalid", 400, `{"error":"invalid"}`},
+		{"missing", 404, `{"error":"missing"}`},
+		{"active chat", 409, `{"error":"active chat"}`},
+		{"active workflow cleanup", 409, `{"error":"active workflow cleanup"}`},
+		{"failure", 500, `{"error":"internal"}`},
+	} {
+		for _, query := range []string{"", "?permanent=false&permanent=true&token=browser-secret&limit=1"} {
+			t.Run(tc.name+query, func(t *testing.T) {
+				calls := 0
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls++
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+					}
+					if r.Method != http.MethodDelete || r.URL.RequestURI() != "/v1/conversations/abc?permanent=true" || len(body) != 0 {
+						t.Errorf("unexpected delete: %s %s body=%q", r.Method, r.URL, body)
+					}
+					if r.Header.Get("Authorization") != "Bearer config-secret" || r.Header.Get("Cookie") != "" || r.Header.Get("X-CSRF-Token") != "" {
+						t.Errorf("unsafe upstream headers: %v", r.Header)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tc.status)
+					fmt.Fprint(w, tc.body)
+				}))
+				defer upstream.Close()
+				s := agentCoreProxyServer(t, upstream.URL)
+				r := httptest.NewRequest("POST", "/panel/agentcore/api/conversations/abc/delete"+query, strings.NewReader(`{"token":"browser-secret","permanent":false}`))
+				r.Header.Set("Authorization", "Bearer browser-secret")
+				r.Header.Set("Cookie", "browser-secret")
+				r.Header.Set("X-CSRF-Token", "browser-secret")
+				w := httptest.NewRecorder()
+				s.handleAgentCoreAPI(w, r)
+				if calls != 1 || w.Code != tc.status || w.Body.String() != tc.body {
+					t.Fatalf("calls=%d status=%d body=%s", calls, w.Code, w.Body)
+				}
+			})
+		}
+	}
+}
+
+func TestAgentCoreDeletionReadyForPreferences(t *testing.T) {
+	for _, tc := range []struct {
+		name, runs        string
+		checkStatus, want int
+	}{
+		{"empty", `[]`, 200, 200},
+		{"null", `null`, 200, 200},
+		{"terminal", `[{"status":"completed"},{"status":"failed"},{"status":"cancelled"}]`, 200, 200},
+		{"pending", `[{"status":"pending"}]`, 200, 409},
+		{"running", `[{"status":"running"}]`, 200, 409},
+		{"clarify", `[{"status":"waiting_clarification"}]`, 200, 409},
+		{"approval", `[{"status":"waiting_approval"}]`, 200, 409},
+		{"unknown", `[{"status":"new-state"}]`, 200, 502},
+		{"nil run", `[null]`, 200, 502},
+		{"malformed", `{}`, 200, 502},
+		{"trailing", `[] {}`, 200, 502},
+		{"unavailable", `[]`, 503, 502},
+		{"redirect", `[]`, 307, 502},
+		{"history cap", `[` + strings.Repeat(`{"status":"completed"},`, 499) + `{"status":"completed"}]`, 200, 409},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			deleted := false
+			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/conversations/abc/runs?limit=500" {
+					t.Errorf("unexpected helper request: %s %s", r.Method, r.URL)
+				}
 				if r.Header.Get("Authorization") != "Bearer config-secret" || r.Header.Get("Cookie") != "" || r.Header.Get("X-CSRF-Token") != "" {
 					t.Errorf("unsafe upstream headers: %v", r.Header)
 				}
-				if r.Method == http.MethodGet && r.URL.RequestURI() == "/v1/conversations/abc/runs?limit=500" {
-					w.WriteHeader(tc.checkStatus)
-					fmt.Fprint(w, tc.runs)
-					return
-				}
-				deleted = true
-				body, _ := io.ReadAll(r.Body)
-				if r.Method != http.MethodDelete || r.URL.RequestURI() != "/v1/conversations/abc" || len(body) != 0 {
-					t.Errorf("unexpected delete: %s %s body=%q", r.Method, r.URL, body)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(tc.deleteStatus)
-				fmt.Fprint(w, `{"status":"archived"}`)
+				w.WriteHeader(tc.checkStatus)
+				fmt.Fprint(w, tc.runs)
 			}))
 			defer upstream.Close()
-			s := agentCoreProxyServer(t, upstream.URL)
-			r := httptest.NewRequest("POST", "/panel/agentcore/api/conversations/abc/delete?token=evil", strings.NewReader(`{"ignored":true}`))
+			target, err := url.Parse(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest("POST", "/panel/agentcore/api/conversations/abc/preferences", nil)
 			r.Header.Set("Cookie", "browser-secret")
 			r.Header.Set("X-CSRF-Token", "browser-secret")
 			w := httptest.NewRecorder()
-			s.handleAgentCoreAPI(w, r)
-			wantDelete := tc.checkStatus == 200 && (tc.name == "empty" || tc.name == "null" || tc.name == "terminal" || strings.HasPrefix(tc.name, "delete "))
-			if w.Code != tc.want || deleted != wantDelete {
-				t.Fatalf("status=%d deleted=%v body=%s", w.Code, deleted, w.Body)
-			}
-			if deleted && w.Body.String() != `{"status":"archived"}` {
-				t.Fatalf("delete response changed: %s", w.Body)
+			ready := agentCoreDeletionReady(w, r, target, "config-secret", "/v1/conversations/abc")
+			if calls != 1 || w.Code != tc.want || ready != (tc.want == http.StatusOK) {
+				t.Fatalf("calls=%d status=%d ready=%v body=%s", calls, w.Code, ready, w.Body)
 			}
 		})
 	}

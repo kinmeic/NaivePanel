@@ -95,11 +95,14 @@ func TestAgentCoreAPIRouteCSRF(t *testing.T) {
 			t.Error("CSRF token leaked upstream")
 		}
 		if strings.HasSuffix(r.URL.Path, "/runs") {
-			fmt.Fprint(w, `[]`)
-			return
+			t.Error("deletion must not preflight runs")
 		}
-		if r.URL.Path == "/v1/conversations/test-id" && r.Method != http.MethodDelete {
-			t.Errorf("delete method: %s", r.Method)
+		if r.URL.Path == "/v1/conversations/test-id" {
+			if r.Method != http.MethodDelete || r.URL.RawQuery != "permanent=true" {
+				t.Errorf("unexpected deletion: %s %s", r.Method, r.URL)
+			}
+			fmt.Fprint(w, `{"status":"deleted"}`)
+			return
 		}
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -126,6 +129,12 @@ func TestAgentCoreAPIRouteCSRF(t *testing.T) {
 			want := http.StatusForbidden
 			if csrf == session.CSRF {
 				want = http.StatusAccepted
+				if strings.HasSuffix(path, "/delete") {
+					want = http.StatusOK
+				}
+				if calls.Load() != before+1 {
+					t.Error("valid CSRF must make exactly one upstream request")
+				}
 			}
 			if w.Code != want {
 				t.Errorf("%s csrf=%q: status %d, want %d: %s", path, csrf, w.Code, want, w.Body)

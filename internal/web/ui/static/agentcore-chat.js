@@ -8,11 +8,11 @@
   var input = el("input"), messages = el("messages"), list = el("list"), follow = true, options = {}, usageInfo = null;
   var sessions = new Map(), deleting = new Set(), liveStates = new Map(), statusQueue = [], statusActive = 0, statusEpoch = 0, statusTimer = null, statusController, pageStopped = false;
     var pending = new Map(), optionsReady = false, conversationMetadata = {}, preferencesKnown = true;
-    var selectedMode = "build", confirmedMode = "";
+    var selectedMode = "build", confirmedMode = "", savingPreferences = false;
     var modeValues = ["plan", "build", "edit", "guarded", "yolo"];
     function fillSelect(id, values, selected, labels) {
       var select = el(id); select.replaceChildren();
-      values = values.slice(); if (selected && values.indexOf(selected) < 0) values.push(selected);
+      values = values.slice(); if (values.indexOf(selected) < 0) values.push(selected);
       values.forEach(function (value) { var option = node("option", labels[value] || value); option.value = value; select.appendChild(option); });
       select.value = selected;
     }
@@ -21,9 +21,9 @@
       var mode = current ? (preferencesKnown ? conversationMetadata.mode || "" : "unknown") : selectedMode;
 
       fillSelect("mode", modeValues, mode, { "": "继承服务默认（" + (options.approval_mode || "未知") + "）", plan: "plan · 限制写入", build: "build · 按风险审批", edit: "edit · 允许工作区编辑", guarded: "guarded · 广泛允许，终端仍需审批", yolo: "yolo · 高危广泛允许", unknown: "会话设置读取失败" });
-      el("settings").textContent = "模型：" + (current && !preferencesKnown ? "未知" : conversationMetadata.model || options.model || "未知") + " · 思考强度：" + effort;
+      el("settings").textContent = (current && !preferencesKnown ? "未知" : conversationMetadata.model || options.model || "未知") + " · " + effort;
       el("preference-note").textContent = "";
-            el("preference-note").title = current ? "已有会话权限模式只读；修改请选择新建会话。" : "权限模式仅对新会话生效，默认 build。";
+            el("preference-note").title = current ? "修改会话权限模式；运行中不可修改。" : "新会话默认 build。";
       controls();
     }
     function confirmPermission(mode) {
@@ -32,27 +32,40 @@
       confirmedMode = mode; return true;
     }
 
-    el("mode").addEventListener("change", function () {
-      if (current || busy) return;
+    el("mode").addEventListener("change", async function () {
       var value = el("mode").value;
-      if (confirmPermission(value)) selectedMode = value;
-      else el("mode").value = selectedMode;
+      if (el("mode").disabled || modeValues.indexOf(value) < 0) { renderPreferences(); return; }
+      var previousConfirmation = confirmedMode;
+      if (!confirmPermission(value)) { renderPreferences(); return; }
+      if (!current) { selectedMode = value; return; }
+      var id = current, token = generation;
+      savingPreferences = true; error(""); controls();
+      try {
+        var conversation = await request("/conversations/" + encodeURIComponent(id) + "/preferences", { mode: value });
+        if (token !== generation || current !== id || pageStopped) return;
+        if (!conversation || conversation.id !== id || !conversation.metadata || typeof conversation.metadata !== "object" || Array.isArray(conversation.metadata) || conversation.metadata.mode !== value) throw new Error("服务未确认权限模式更新");
+        conversationMetadata = conversation.metadata; preferencesKnown = true;
+      } catch (err) {
+        if (token === generation && current === id && !pageStopped) { confirmedMode = previousConfirmation; error("权限模式更新失败：" + err.message); }
+      } finally { savingPreferences = false; renderPreferences(); }
     });
   function node(tag, text, cls) { var n = document.createElement(tag); n.textContent = text || ""; if (cls) n.className = cls; return n; }
   function error(text) { el("error").textContent = text; el("error").classList.toggle("hidden", !text); }
-  function status(text) { el("status").textContent = text; }
+  function status() {}
   function controls() {
-    input.disabled = !enabled || busy || loading || !ready;
-        el("mode").disabled = !enabled || !optionsReady || !!current || busy || loading;
+    input.disabled = !enabled || busy || loading || savingPreferences || !ready;
+        var session = sessions.get(current);
+                var active = session && ["unknown", "running", "waiting"].indexOf(session.state) >= 0;
+                el("mode").disabled = !enabled || !optionsReady || busy || loading || savingPreferences || !!active || !preferencesKnown;
     el("send").disabled = input.disabled || !input.value.trim();
     el("send").classList.toggle("hidden", busy);
     el("stop").classList.toggle("hidden", !busy);
-    el("new").disabled = !enabled || busy; el("refresh").disabled = !enabled || busy;
+    el("new").disabled = !enabled || busy || savingPreferences; el("refresh").disabled = !enabled || busy || savingPreferences;
     el("stop").disabled = !busy || !current || stopping || stopped;
     el("stop").title = !current && busy ? "等待流返回会话 ID" : "请求停止当前运行";
     sessions.forEach(function (s, id) {
-          s.open.disabled = busy || deleting.has(id);
-          s.remove.disabled = busy || deleting.has(id) || ["unknown", "running", "waiting"].indexOf(s.state) >= 0;
+          s.open.disabled = busy || savingPreferences || deleting.has(id);
+          s.remove.disabled = busy || savingPreferences || deleting.has(id) || ["unknown", "running", "waiting"].indexOf(s.state) >= 0;
         });
     messages.setAttribute("aria-busy", String(busy || loading));
   }
@@ -80,31 +93,39 @@
   el("bottom").addEventListener("click", function () { follow = true; scroll(true); });
   function empty(text) { messages.replaceChildren(node("p", text, "agent-chat-empty muted")); }
   async function copy(text, button) {
-    var label = button.dataset.copyLabel || "复制代码";
-    try { await navigator.clipboard.writeText(text); button.textContent = "已复制"; }
-    catch (_) { error("剪贴板不可用，请手动选择复制。"); button.textContent = "复制失败"; }
-    window.setTimeout(function () { button.textContent = label; }, 1600);
+    var label = button.dataset.copyLabel || "复制代码", icon = button.dataset.copyIcon === "true";
+    function feedback(text) { if (icon) { button.title = text; button.setAttribute("aria-label", text); } else button.textContent = text; }
+    try { await navigator.clipboard.writeText(text); feedback("已复制"); }
+    catch (_) { error("剪贴板不可用，请手动选择复制。"); feedback("复制失败"); }
+    window.setTimeout(function () { feedback(label); }, 1600);
   }
   function addMessage(entry) {
     var placeholder = messages.querySelector(".agent-chat-empty"); if (placeholder) placeholder.remove();
-    var article = node("article", "", "agent-chat-message" + (entry.role === "user" ? " agent-chat-user" : ""));
-    var head = node("div", "", "agent-chat-message-head");
-    head.appendChild(node("strong", ({ user: "你", assistant: "助手", tool: "工具", system: "系统" })[entry.role] || "消息"));
-    if (entry.created_at) { var date = new Date(entry.created_at); if (!isNaN(date.getTime())) head.appendChild(node("time", date.toLocaleString(), "muted")); }
-    var rawContent = "", copyMessage = node("button", "复制消息", "btn"); copyMessage.type = "button"; copyMessage.dataset.copyLabel = "复制消息";
+    var roleClass = entry.role === "user" ? " agent-chat-user" : " agent-chat-assistant";
+    var wrap = node("div", "", "agent-chat-message-wrap" + roleClass);
+    var article = node("article", "", "agent-chat-message");
+    var rawContent = "", copyMessage = node("button", "", "btn agent-chat-copy"); copyMessage.type = "button"; copyMessage.dataset.copyLabel = "复制消息";
+    copyMessage.dataset.copyIcon = "true"; copyMessage.title = "复制消息";
+    var template = el("copy-icon");
+    if (template && template.content) copyMessage.appendChild(template.content.cloneNode(true));
+    else {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("width", "16"); svg.setAttribute("height", "16"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", "M9 9h11v11H9zM15 5V3H3v12h2"); svg.appendChild(path); copyMessage.appendChild(svg);
+    }
         copyMessage.setAttribute("aria-label", "复制完整消息");
         copyMessage.addEventListener("click", function () {
           var text = rawContent;
           if (entry.tool_calls && entry.tool_calls.length) text += "\n\n工具调用：\n" + JSON.stringify(entry.tool_calls, null, 2);
           if (entry.actions && entry.actions.length) text += "\n\n工具执行记录：\n" + JSON.stringify(entry.actions, null, 2);
           return copy(text, copyMessage);
-        }); head.appendChild(copyMessage);
-        article.appendChild(head); var body = node("div", "", "agent-chat-message-body"); article.appendChild(body); messages.appendChild(article);
+        });
+        var body = node("div", "", "agent-chat-message-body"); article.appendChild(body); wrap.appendChild(article); wrap.appendChild(copyMessage); messages.appendChild(wrap);
     function update(text) { rawContent = text; body.replaceChildren(core.markdown(document, text, copy)); scroll(false); }
     update(entry.content || "");
     if (entry.tool_calls && entry.tool_calls.length) detail(article, "工具调用", JSON.stringify(entry.tool_calls, null, 2));
     if (entry.actions && entry.actions.length) detail(article, "工具执行记录", JSON.stringify(entry.actions, null, 2));
-    if (entry.status) article.appendChild(node("small", "状态：" + entry.status, "muted"));
+    if (entry.status) detail(article, "消息状态", entry.status);
     return { article: article, update: update };
   }
   function detail(parent, title, content) {
@@ -114,7 +135,7 @@
   function updateUsage(info) {
     usageInfo = info; var u = core.usage(info, options);
     el("ring").style.setProperty("--usage", (u.percent || 0) + "%");
-    el("usage-label").textContent = u.percent === null ? "上下文未知" : u.percent.toFixed(1) + (u.estimated ? "% 输入估算" : "% 后端报告参考");
+    el("usage-label").textContent = u.percent === null ? "上下文未知" : u.percent.toFixed(1) + "%";
     el("usage").textContent = "模型：" + (conversationMetadata.model || options.model || "未知") + "\n窗口：" + (u.window || "未知") + " tokens\n最大输出：" + (options.max_output_tokens || "未知") + "\n后端 context_tokens：" + (u.context === null ? "未知" : u.context) + "\n累计输入：" + (info ? u.prompt : "未知") + "\n累计输出：" + (info ? u.completion : "未知") + "\n累计总量：" + (info ? u.total : "未知") + "\n圆环优先使用后端 context_tokens / 配置窗口；缺少时使用累计输入 prompt_tokens / 窗口作估算。累计输入会叠加多次模型调用，不是精确当前占用，可能超过窗口；圆环最多显示 100%。当前 AgentCore 历史 context_tokens 也可能是累计总量；模型覆盖后的窗口需以该模型配置为准。";
   }
   async function loadOptions() {
@@ -184,17 +205,17 @@
   async function deleteSession(id) {
     var s = sessions.get(id);
     if (!s || s.remove.disabled || deleting.has(id) || pageStopped) return;
-    if (!window.confirm("将此会话移出历史列表（归档）？相关消息仍保留，不会物理删除。")) return;
+    if (!window.confirm("确定永久删除此会话及相关会话消息？此操作不可恢复。")) return;
     deleting.add(id); controls(); var selection = generation;
     try {
       var result = await request("/conversations/" + encodeURIComponent(id) + "/delete", {});
-      if (!result || result.status !== "archived") throw new Error("服务未确认归档");
+      if (!result || result.status !== "deleted") throw new Error("服务未确认永久删除");
       if (pageStopped) return;
       ++listGeneration; sessions.delete(id); liveStates.delete(id);
       list.querySelectorAll(".agent-chat-session-row").forEach(function (row) { if (row.dataset.id === id) row.remove(); });
       if (current === id && selection === generation && !busy) await openConversation("", "");
       el("list-status").textContent = sessions.size ? "" : "暂无历史会话";
-    } catch (err) { if (!pageStopped) error("归档失败：" + err.message); }
+    } catch (err) { if (!pageStopped) error("永久删除失败：" + err.message); }
     finally { deleting.delete(id); controls(); }
   }
   async function refreshList() {
@@ -210,7 +231,7 @@
         b.title = (c.title || "未命名会话") + " · " + c.id; b.setAttribute("aria-pressed", String(current === c.id));
         b.addEventListener("click", function () { openConversation(c.id, c.title); }); row.appendChild(b);
                 var remove = node("button", "", "agent-chat-session-delete btn"); remove.type = "button";
-                remove.title = "删除会话（归档）"; remove.setAttribute("aria-label", remove.title);
+                remove.title = "永久删除会话"; remove.setAttribute("aria-label", remove.title);
                 var template = el("delete-icon");
                 if (template && template.content) remove.appendChild(template.content.cloneNode(true));
                 else {
@@ -266,7 +287,7 @@
     } catch (err) { if (token === generation) error("待审批请求读取失败：" + err.message); }
   }
   async function openConversation(id, title) {
-    if (busy || !enabled || deleting.has(id)) return; var token = ++generation;
+    if (busy || savingPreferences || !enabled || deleting.has(id)) return; var token = ++generation;
     if (historyController) historyController.abort(); historyController = new AbortController();
     current = id; loading = !!id; ready = !id; follow = true; input.value = ""; error(""); clearPending();
         conversationMetadata = {}; preferencesKnown = !id; confirmedMode = "";
@@ -302,7 +323,7 @@
   input.addEventListener("input", controls);
   input.addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!el("send").disabled) el("form").requestSubmit(); } });
   el("form").addEventListener("submit", async function (event) {
-    event.preventDefault(); var message = input.value.trim(); if (!enabled || busy || loading || !ready || !message) return;
+    event.preventDefault(); var message = input.value.trim(); if (!enabled || busy || loading || savingPreferences || !ready || !message) return;
     var effectiveMode = current ? (preferencesKnown ? conversationMetadata.mode || options.approval_mode || "" : "") : selectedMode;
         if (!confirmPermission(effectiveMode)) return;
         var token = ++generation; busy = true; liveStatus("running", "正在提交运行"); stopping = false; stopped = false; clearPending(); input.value = ""; error(""); updateUsage(null);
