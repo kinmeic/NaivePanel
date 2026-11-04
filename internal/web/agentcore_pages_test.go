@@ -42,6 +42,10 @@ func TestAgentCorePageRoutesProtected(t *testing.T) {
 	}
 	routes := []struct{ method, path string }{
 		{"GET", "/agentcore"}, {"GET", "/agentcore/logs"},
+		{"GET", "/agentcore/api/options"},
+		{"GET", "/agentcore/api/approvals"},
+		{"POST", "/agentcore/api/approvals/request-id"},
+		{"POST", "/agentcore/api/chat/test-id/clarify"},
 		{"GET", "/agentcore/api/conversations"},
 		{"GET", "/agentcore/api/conversations/test-id"},
 		{"GET", "/agentcore/api/conversations/test-id/logs"},
@@ -97,7 +101,7 @@ func TestAgentCoreAPIRouteCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/chat", "/chat/stream", "/chat/test-id/stop"} {
+	for _, path := range []string{"/chat", "/chat/stream", "/chat/test-id/stop", "/chat/test-id/clarify", "/approvals/request-id"} {
 		for _, csrf := range []string{"", "wrong", session.CSRF} {
 			r := httptest.NewRequest("POST", s.Cfg.BasePath+"/agentcore/api"+path, strings.NewReader(`{"message":"hello"}`))
 			r.Header.Set("Content-Type", "application/json")

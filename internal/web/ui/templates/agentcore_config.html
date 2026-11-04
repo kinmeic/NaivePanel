@@ -21,13 +21,17 @@
    <label>模型 ID<input id="agent-model" placeholder="模型名称"></label>
    <label>模型 Base URL<input id="agent-base-url" placeholder="https://api.openai.com/v1"></label>
    <label>模型 API Key<input id="agent-api-key" type="password" autocomplete="off" placeholder="填写服务商 API Key"></label>
-   <label>工作区路径<input id="agent-workspace"></label>
+   <label>模型思考强度<input id="agent-reasoning-effort" placeholder="留空使用服务商默认值" aria-describedby="agent-model-limits-help"></label>
+   <label>上下文窗口</label>（Token）<input id="agent-context-window" type="number" min="1" step="1" required></label>
+   <label>最大</label>输出 Token<input id="agent-max-output-tokens" type="number" min="1" step="1" required></label>
+   <label></label>工作区路径<input id="agent-workspace"></label>
    <label>存储目录<input id="agent-storage-dir"></label>
    <label>数据库路径<input id="agent-db-path"></label>
    <label>权限模式<select id="agent-permission"><option value="plan">plan</option><option value="build">build</option><option value="edit">edit</option><option value="guarded">guarded</option><option value="yolo">yolo</option></select></label>
   </div>
+  <p class="muted" id="agent-model-limits-help">思考强度按服务商和模型实际支持填写，留空不发送 effort。上下文窗口默认 200000、最大输出默认 32000；请按模型能力调整。</p>
   <label class="check"><input type="checkbox" id="agent-terminal">启用终端工具</label>
-  <p class="muted">AgentCore 以独立系统用户运行。更改监听地址时须遵守 AgentCore 的认证与终端安全校验。</p>
+  <p class="muted">AgentCore 以独立系统用户运行，终端并非操作系统沙箱。本机监听默认启用终端；非 loopback 监听必须关闭终端，并在 Raw YAML 中设置 server.auth_token。</p>
   <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存</button></div>
  </section>
  <section class="config-panel hidden" data-agent-panel="skills">

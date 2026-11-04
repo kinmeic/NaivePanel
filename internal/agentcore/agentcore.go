@@ -323,12 +323,23 @@ func (m *Manager) ensureUserAndDirs() error {
 	return nil
 }
 func (m *Manager) writeInitialConfig(example []byte) error {
+	data, err := m.initialConfig(example)
+	if err != nil {
+		return err
+	}
+	return m.writeConfigFile(data)
+}
+
+func (m *Manager) initialConfig(example []byte) ([]byte, error) {
 	if len(example) == 0 {
-		return errors.New("安装包缺少示例配置")
+		return nil, errors.New("安装包缺少示例配置")
 	}
 	var root map[string]any
 	if err := yaml.Unmarshal(example, &root); err != nil {
-		return err
+		return nil, err
+	}
+	if root == nil {
+		return nil, errors.New("示例配置必须是 YAML 对象")
 	}
 	set := func(section, key string, value any) {
 		obj, _ := root[section].(map[string]any)
@@ -338,8 +349,16 @@ func (m *Manager) writeInitialConfig(example []byte) error {
 		}
 		obj[key] = value
 	}
-	set("server", "terminalEnabled", false)
-	set("server", "auth_token", "")
+	server, _ := root["server"].(map[string]any)
+	host, _ := server["host"].(string)
+	loopback := host == "" || host == "127.0.0.1" || host == "localhost" || host == "::1"
+	if enabled, exists := server["terminalEnabled"]; !loopback || !exists || enabled == nil {
+		set("server", "terminalEnabled", loopback)
+	}
+	// Keep network-binding authentication; AgentCore rejects unauthenticated non-loopback hosts.
+	if loopback {
+		set("server", "auth_token", "")
+	}
 	set("llm", "api_key", "")
 	set("workspace", "path", filepath.Join(m.cfg.AgentCore.WorkDir, "workspace"))
 	set("storage", "dir", filepath.Join(m.cfg.AgentCore.WorkDir, "data"))
@@ -350,11 +369,7 @@ func (m *Manager) writeInitialConfig(example []byte) error {
 		root["skills"] = skills
 	}
 	skills["roots"] = []string{m.SkillDir()}
-	data, err := yaml.Marshal(root)
-	if err != nil {
-		return err
-	}
-	return m.writeConfigFile(data)
+	return yaml.Marshal(root)
 }
 func (m *Manager) writeConfigFile(data []byte) error {
 	tmp := m.cfg.AgentCore.ConfigPath + ".new"

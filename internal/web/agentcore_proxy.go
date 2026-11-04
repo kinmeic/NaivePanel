@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -16,6 +17,46 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// handleAgentCoreOptions exposes only non-secret composer configuration.
+func (s *Server) handleAgentCoreOptions(w http.ResponseWriter, r *http.Request) {
+	data, err := s.Agent.ReadConfig()
+	if err != nil {
+		http.Error(w, "无法读取 AgentCore 配置", http.StatusServiceUnavailable)
+		return
+	}
+	var cfg struct {
+		LLM struct {
+			Model   string `yaml:"model"`
+			Effort  string `yaml:"reasoning_effort"`
+			Context int    `yaml:"context_window"`
+			Output  int    `yaml:"max_output_tokens"`
+		} `yaml:"llm"`
+		Tools struct {
+			Approval string `yaml:"approval_mode"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		http.Error(w, "AgentCore 配置格式错误", http.StatusServiceUnavailable)
+		return
+	}
+	if cfg.LLM.Context <= 0 {
+		cfg.LLM.Context = 200000
+	}
+	if cfg.LLM.Output <= 0 {
+		cfg.LLM.Output = 32000
+	}
+	if cfg.Tools.Approval == "" {
+		cfg.Tools.Approval = "build"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]any{
+		"model": cfg.LLM.Model, "reasoning_effort": cfg.LLM.Effort,
+		"context_window": cfg.LLM.Context, "max_output_tokens": cfg.LLM.Output,
+		"approval_mode": cfg.Tools.Approval,
+	})
+}
 
 var agentCoreID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -58,6 +99,10 @@ func agentCoreTarget(data []byte) (*url.URL, string, error) {
 func agentCoreRoute(method, path string) (string, bool) {
 	parts := strings.Split(path, "/")
 	switch {
+	case method == http.MethodGet && path == "/approvals":
+		return "/v1/approvals", true
+	case method == http.MethodPost && len(parts) == 3 && parts[1] == "approvals" && agentCoreID.MatchString(parts[2]):
+		return "/v1/approvals/" + parts[2], true
 	case method == http.MethodGet && path == "/conversations":
 		return "/v1/conversations", true
 	case method == http.MethodGet && len(parts) == 3 && parts[1] == "conversations" && agentCoreID.MatchString(parts[2]):
@@ -66,8 +111,8 @@ func agentCoreRoute(method, path string) (string, bool) {
 		return "/v1/conversations/" + parts[2] + "/logs", true
 	case method == http.MethodPost && (path == "/chat" || path == "/chat/stream"):
 		return "/v1" + path, true
-	case method == http.MethodPost && len(parts) == 4 && parts[1] == "chat" && agentCoreID.MatchString(parts[2]) && parts[3] == "stop":
-		return "/v1/chat/" + parts[2] + "/stop", true
+	case method == http.MethodPost && len(parts) == 4 && parts[1] == "chat" && agentCoreID.MatchString(parts[2]) && (parts[3] == "stop" || parts[3] == "clarify"):
+		return "/v1/chat/" + parts[2] + "/" + parts[3], true
 	}
 	return "", false
 }

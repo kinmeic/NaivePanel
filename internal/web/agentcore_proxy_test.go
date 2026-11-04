@@ -64,7 +64,7 @@ func TestAgentCoreProxyWhitelist(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/tools"}, {"DELETE", "/conversations/abc"},
 		{"PUT", "/conversations/abc"}, {"GET", "/chat"},
-		{"GET", "/conversations/abc/logs/extra"}, {"POST", "/chat/abc/clarify"},
+		{"GET", "/conversations/abc/logs/extra"}, {"POST", "/chat/abc/clarify/extra"},
 		{"GET", "/conversations/../tools"}, {"GET", "/conversations/a%2Fb"},
 		{"GET", "/conversations/%61"}, {"GET", "/conversations/."},
 		{"GET", "/conversations/"}, {"HEAD", "/conversations"},
@@ -81,7 +81,10 @@ func TestAgentCoreProxyForwarding(t *testing.T) {
 	for _, tc := range []struct{ method, path, upstream string }{
 		{"GET", "/conversations?source=web&limit=10&offset=2&token=evil", "/v1/conversations?limit=10&offset=2&source=web"},
 		{"GET", "/conversations/abc-123?foo=bar", "/v1/conversations/abc-123"},
-				{"GET", "/conversations/abc-123/logs", "/v1/conversations/abc-123/logs"},
+		{"GET", "/conversations/abc-123/logs", "/v1/conversations/abc-123/logs"},
+		{"GET", "/approvals", "/v1/approvals"},
+		{"POST", "/approvals/request-123", "/v1/approvals/request-123"},
+		{"POST", "/chat/abc-123/clarify", "/v1/chat/abc-123/clarify"},
 		{"POST", "/chat", "/v1/chat"},
 		{"POST", "/chat/abc-123/stop", "/v1/chat/abc-123/stop"},
 	} {
