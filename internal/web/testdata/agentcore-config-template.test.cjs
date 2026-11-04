@@ -12,6 +12,8 @@ const expectedFields = new Map([
   ['agent-base-url', '模型 Base URL'],
   ['agent-api-key', '模型 API Key'],
   ['agent-reasoning-effort', '模型思考强度'],
+  ['agent-thinking-type', 'Anthropic 思考模式'],
+  ['agent-thinking-budget', '思考预算 Token'],
   ['agent-context-window', '上下文窗口'],
   ['agent-max-output-tokens', '最大输出 Token'],
   ['agent-workspace', '工作区路径'],

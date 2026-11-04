@@ -448,6 +448,18 @@ test('reasoning aggregates per iteration, phase text survives tools and done onl
   await wrap.children[1].events.click(); assert.equal(h.copied[0], '先检查文件\n\n**最终**');
 });
 
+test('thinking markers without model reasoning do not create empty disclosure rows', async () => {
+  const h = harness(); await tick(); h.el('input').value = 'question';
+  const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+  h.emit({ type: 'thinking', iteration: 1 });
+  h.emit({ type: 'chunk', content: 'answer' });
+  h.emit({ type: 'done', reply: 'answer' });
+  await run;
+  const article = h.el('messages').querySelectorAll('article')[1];
+  assert.equal(article.querySelectorAll('.agent-chat-reasoning').length, 0);
+  assert.match(article.textContent, /answer/);
+});
+
 test('history retains log order, tool results and phase content without fabricating reasoning', async () => {
   const h = harness(url => {
     if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);

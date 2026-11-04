@@ -34,6 +34,9 @@ test('actual defaults and model settings round-trip without dropping unknown fie
   assert.equal(e.get('agent-context-window').value, '200000');
   assert.equal(e.get('agent-max-output-tokens').value, '32000');
   assert.equal(e.get('agent-reasoning-effort').value, '');
+  assert.equal(e.get('agent-thinking-type').value, 'auto');
+  assert.equal(e.get('agent-thinking-budget').value, '16000');
+  assert.equal(e.get('agent-expose-reasoning').checked, true);
   assert.equal(e.get('agent-terminal').checked, true);
   e.get('agent-context-window').value = '128000';
   e.get('agent-max-output-tokens').value = '8192';
@@ -43,20 +46,38 @@ test('actual defaults and model settings round-trip without dropping unknown fie
   assert.equal(result.state.llm.context_window, 128000);
   assert.equal(result.state.llm.max_output_tokens, 8192);
   assert.equal(result.state.llm.reasoning_effort, 'provider-specific');
+  assert.equal(result.state.llm.thinking_type, 'auto');
+  assert.equal(result.state.llm.thinking_budget_tokens, 16000);
+  assert.equal(result.state.llm.expose_reasoning, true);
   assert.equal(result.state.llm.custom, 'keep');
   assert.deepEqual(result.state.unknown, { keep: true });
 });
 test('existing values, explicit terminal false and clearing effort are preserved', () => {
   const state = config({ terminalEnabled: false });
-  Object.assign(state.llm, { context_window: 64000, max_output_tokens: 4096, reasoning_effort: 'high' });
+  Object.assign(state.llm, { context_window: 64000, max_output_tokens: 4096, reasoning_effort: 'high', thinking_type: 'disabled', thinking_budget_tokens: 0, expose_reasoning: false });
   const e = editor(state);
   assert.equal(e.get('agent-reasoning-effort').value, 'high');
+  assert.equal(e.get('agent-thinking-type').value, 'disabled');
+  assert.equal(e.get('agent-expose-reasoning').checked, false);
   e.get('agent-reasoning-effort').value = '';
   const result = e.submit().state;
   assert.equal(result.server.terminalEnabled, false);
   assert.equal(result.llm.context_window, 64000);
   assert.equal(result.llm.max_output_tokens, 4096);
   assert.equal(result.llm.reasoning_effort, '');
+  assert.equal(result.llm.thinking_type, 'disabled');
+  assert.equal(result.llm.thinking_budget_tokens, 0);
+  assert.equal(result.llm.expose_reasoning, false);
+});
+test('manual thinking requires a budget below the output limit', () => {
+  const e = editor(config());
+  e.get('agent-thinking-type').value = 'enabled';
+  for (const invalid of ['0', '1023', '32000', '9007199254740992']) {
+    e.get('agent-thinking-budget').value = invalid;
+    assert.equal(e.submit().prevented, true, invalid);
+  }
+  e.get('agent-thinking-budget').value = '16000';
+  assert.equal(e.submit().state.llm.thinking_type, 'enabled');
 });
 test('token limits must be positive safe integers', () => {
   for (const id of ['agent-context-window', 'agent-max-output-tokens']) {

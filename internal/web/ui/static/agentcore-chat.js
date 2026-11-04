@@ -164,10 +164,20 @@
       reasoning = null;
     }
     function think(round) {
-      if (reasoning && (!round || round === iteration)) return;
+      if (round && round === iteration) return;
       phase(); finishThinking(); iteration = round || iteration + 1;
-      reasoning = detail(process, "思考 · 第 " + iteration + " 轮 · 进行中", "");
-      reasoning.details.classList.toggle("agent-chat-reasoning", true); reasoning.details.dataset.state = "pending"; reasoning.details.open = true;
+    }
+    function appendReasoning(e) {
+      var text = typeof e.content === "string" ? e.content : "";
+      if (!text) return;
+      var round = Number.isSafeInteger(e.iteration) && e.iteration > 0 ? e.iteration : iteration || 1;
+      if (reasoning && round !== iteration) finishThinking();
+      iteration = round;
+      if (!reasoning) {
+        reasoning = detail(process, "思考 · 第 " + iteration + " 轮 · 进行中", "");
+        reasoning.details.classList.toggle("agent-chat-reasoning", true); reasoning.details.dataset.state = "pending"; reasoning.details.open = true;
+      }
+      reasoning.text.textContent += text;
     }
     function tool(e, result) {
       phase(); finishThinking();
@@ -183,7 +193,7 @@
     }
     update(entry.content || "");
     return { article: article, process: process, update: update, phase: phase, think: think, finishThinking: finishThinking, tool: tool,
-      reasoning: function (e) { think(e.iteration); reasoning.text.textContent += typeof e.content === "string" ? e.content : ""; },
+      reasoning: appendReasoning,
       note: function (title, text) { phase(); finishThinking(); detail(process, title, text); }
     };
   }

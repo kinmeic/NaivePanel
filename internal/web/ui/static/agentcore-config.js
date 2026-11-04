@@ -17,6 +17,9 @@
   setValue("agent-host", server.host); setValue("agent-port", server.port); setValue("agent-api-format", llm.api_format || "openai"); setValue("agent-model", llm.model); setValue("agent-base-url", llm.base_url); setValue("agent-api-key", llm.api_key); setValue("agent-workspace", workspace.path); setValue("agent-storage-dir", storage.dir); setValue("agent-db-path", storage.sessionDbPath); setValue("agent-permission", permission.mode || "build"); el("agent-terminal").checked = server.terminalEnabled == null ? isLoopback(server.host) : !!server.terminalEnabled;
     function isLoopback(host) { return host == null || host === "" || host === "127.0.0.1" || host === "localhost" || host === "::1"; }
     setValue("agent-reasoning-effort", llm.reasoning_effort);
+    setValue("agent-thinking-type", llm.thinking_type || "auto");
+    setValue("agent-thinking-budget", llm.thinking_budget_tokens == null ? 16000 : llm.thinking_budget_tokens);
+    el("agent-expose-reasoning").checked = llm.expose_reasoning !== false;
     setValue("agent-context-window", llm.context_window == null ? 200000 : llm.context_window);
     setValue("agent-max-output-tokens", llm.max_output_tokens == null ? 32000 : llm.max_output_tokens);
   el("agent-feature-skill").checked = features.skill !== false; el("agent-skills-enabled").checked = skills.enabled !== false; el("agent-skills-instructions").checked = skills.includeInstructions !== false; setValue("agent-skill-roots", (skills.roots || []).join("\n")); el("agent-feature-mcp").checked = features.mcp !== false;
@@ -48,10 +51,12 @@
     if (editingName && editingName !== name) delete servers[editingName]; servers[name] = data; renderMCP(); dialog.close();
   }); renderMCP();
   el("agent-structured-form").addEventListener("submit", function (event) {
-    var contextWindow = Number(value("agent-context-window")), maxOutputTokens = Number(value("agent-max-output-tokens"));
+    var contextWindow = Number(value("agent-context-window")), maxOutputTokens = Number(value("agent-max-output-tokens")), thinkingType = value("agent-thinking-type"), thinkingBudget = Number(value("agent-thinking-budget"));
     if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens <= 0) { event.preventDefault(); showError("上下文窗口和最大输出 Token 必须是正整数"); return; }
+    if (!["auto", "disabled", "adaptive", "enabled"].includes(thinkingType)) { event.preventDefault(); showError("请选择有效的 Anthropic 思考模式"); return; }
+    if (!Number.isSafeInteger(thinkingBudget) || thinkingBudget < 0 || (thinkingType === "enabled" && (thinkingBudget < 1024 || thinkingBudget >= maxOutputTokens))) { event.preventDefault(); showError("思考预算必须是非负整数；手动预算须至少 1024 且小于最大输出 Token"); return; }
     if (!isLoopback(value("agent-host")) && (el("agent-terminal").checked || !server.auth_token)) { event.preventDefault(); showError("非本机监听必须关闭终端工具，并在 Raw YAML 中设置 server.auth_token；环境变量是否有效由 AgentCore 校验"); return; }
-    llm.reasoning_effort = value("agent-reasoning-effort"); llm.context_window = contextWindow; llm.max_output_tokens = maxOutputTokens;
+    llm.reasoning_effort = value("agent-reasoning-effort"); llm.thinking_type = thinkingType; llm.thinking_budget_tokens = thinkingBudget; llm.expose_reasoning = el("agent-expose-reasoning").checked; llm.context_window = contextWindow; llm.max_output_tokens = maxOutputTokens;
     server.host = value("agent-host"); server.port = +value("agent-port"); server.terminalEnabled = el("agent-terminal").checked; llm.api_format = value("agent-api-format"); llm.model = value("agent-model"); llm.base_url = value("agent-base-url"); llm.api_key = value("agent-api-key"); workspace.path = value("agent-workspace"); storage.dir = value("agent-storage-dir"); storage.sessionDbPath = value("agent-db-path"); permission.mode = value("agent-permission"); features.skill = el("agent-feature-skill").checked; skills.enabled = el("agent-skills-enabled").checked; skills.includeInstructions = el("agent-skills-instructions").checked; skills.roots = value("agent-skill-roots").split("\n").map(function (x) { return x.trim(); }).filter(Boolean); features.mcp = el("agent-feature-mcp").checked;
     if (!server.host || !server.port || server.port < 1 || server.port > 65535) { event.preventDefault(); showError("请填写有效的监听地址和端口"); return; }
     el("agent-structured-value").value = JSON.stringify(state);
