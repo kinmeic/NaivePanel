@@ -40,6 +40,7 @@ test('clearing after submit or conversation switch shrinks back to one line', ()
 test('scroll control is centered and icon-only, input starts with one row', () => {
   const html = fs.readFileSync(path.join(__dirname, '../ui/templates/agentcore.html'), 'utf8');
   assert.match(html, /class="agent-chat-scroll-action"><button id="agent-chat-bottom"[^>]*aria-label="滚动到最新消息">{{icon "arrow-down"}}<\/button>/);
-  assert.match(html, /id="agent-chat-input" rows="1"/);
+  assert.match(html, /id="agent-chat-input" rows="1" aria-label="消息"/);
+  assert.doesNotMatch(html, /<label[^>]*for="agent-chat-input"/);
   assert.match(html, /id="agent-chat-preference-note" class="hidden"/);
 });

@@ -182,7 +182,8 @@ test('streamed usage estimates from cumulative prompt and prefers reported conte
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   h.emit({ type: 'thinking', usage: { prompt_tokens: 25, completion_tokens: 5 } }); await tick();
   assert.equal(h.el('usage-label').textContent, '25.0%');
-  assert.match(h.el('usage').textContent, /累计输入会叠加多次模型调用，不是精确当前占用/);
+  assert.doesNotMatch(h.el('usage').textContent, /模型：|圆环优先|累计输入会叠加/);
+    assert.match(h.el('usage').textContent, /^窗口：/);
   h.emit({ type: 'chunk', content: 'ok', usage: { prompt_tokens: 900, context_tokens: 40 } }); await tick();
   assert.equal(h.el('usage-label').textContent, '40.0%');
   h.emit({ type: 'done', reply: 'ok', usage: { prompt_tokens: 250 } }); await run;

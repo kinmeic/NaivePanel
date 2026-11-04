@@ -1,17 +1,14 @@
 {{define "content"}}
 <div class="editor-title"><a class="btn icon-btn" href="{{.Base}}/agentcore" title="返回 AgentCore" aria-label="返回 AgentCore">{{icon "arrow-left"}}</a><div><h1>AgentCore 日志</h1></div></div>
+<div class="logbar">
+  <span class="muted">条数：</span>
+  <a class="btn {{if eq .Data.LogLines 100}}active{{end}}" href="{{.Base}}/agentcore/logs?lines=100">100</a>
+  <a class="btn {{if eq .Data.LogLines 200}}active{{end}}" href="{{.Base}}/agentcore/logs?lines=200">200</a>
+  <a class="btn {{if eq .Data.LogLines 500}}active{{end}}" href="{{.Base}}/agentcore/logs?lines=500">500</a>
+  <a class="btn {{if eq .Data.LogLines 1000}}active{{end}}" href="{{.Base}}/agentcore/logs?lines=1000">1000</a>
+  <a class="btn" href="{{.Base}}/agentcore/logs?lines={{.Data.LogLines}}">{{icon "refresh-cw"}}刷新</a>
+</div>
 <div class="card">
-  <form method="get" action="{{.Base}}/agentcore/logs" class="service-actions">
-    <label for="agentcore-log-lines">日志行数</label>
-    <select id="agentcore-log-lines" name="lines">
-      <option value="100" {{if eq .Data.LogLines 100}}selected{{end}}>100</option>
-      <option value="200" {{if eq .Data.LogLines 200}}selected{{end}}>200</option>
-      <option value="500" {{if eq .Data.LogLines 500}}selected{{end}}>500</option>
-      <option value="1000" {{if eq .Data.LogLines 1000}}selected{{end}}>1000</option>
-    </select>
-    <button type="submit" class="btn">{{icon "rotate-cw"}}刷新</button>
-
-  </form>
   {{if .Data.LogError}}<p class="warning">{{.Data.LogError}}</p>{{end}}
   <pre class="logs">{{.Data.LogContent}}</pre>
 </div>

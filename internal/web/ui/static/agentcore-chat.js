@@ -136,7 +136,7 @@
     usageInfo = info; var u = core.usage(info, options);
     el("ring").style.setProperty("--usage", (u.percent || 0) + "%");
     el("usage-label").textContent = u.percent === null ? "上下文未知" : u.percent.toFixed(1) + "%";
-    el("usage").textContent = "模型：" + (conversationMetadata.model || options.model || "未知") + "\n窗口：" + (u.window || "未知") + " tokens\n最大输出：" + (options.max_output_tokens || "未知") + "\n后端 context_tokens：" + (u.context === null ? "未知" : u.context) + "\n累计输入：" + (info ? u.prompt : "未知") + "\n累计输出：" + (info ? u.completion : "未知") + "\n累计总量：" + (info ? u.total : "未知") + "\n圆环优先使用后端 context_tokens / 配置窗口；缺少时使用累计输入 prompt_tokens / 窗口作估算。累计输入会叠加多次模型调用，不是精确当前占用，可能超过窗口；圆环最多显示 100%。当前 AgentCore 历史 context_tokens 也可能是累计总量；模型覆盖后的窗口需以该模型配置为准。";
+    el("usage").textContent = "窗口：" + (u.window || "未知") + " tokens\n最大输出：" + (options.max_output_tokens || "未知") + "\n后端 context_tokens：" + (u.context === null ? "未知" : u.context) + "\n累计输入：" + (info ? u.prompt : "未知") + "\n累计输出：" + (info ? u.completion : "未知") + "\n累计总量：" + (info ? u.total : "未知") ;
   }
   async function loadOptions() {
     try {

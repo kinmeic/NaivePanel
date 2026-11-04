@@ -21,13 +21,13 @@ func TestAgentCoreLogsTemplate(t *testing.T) {
 			s.render(w, httptest.NewRequest("GET", s.Cfg.BasePath+"/agentcore/logs", nil), "agentcore_logs", "AgentCore 日志", map[string]any{"LogLines": lines, "LogContent": "journal <script>alert(1)</script>", "LogError": "error <script>"})
 			body := w.Body.String()
 			assertAgentCoreLogsLayout(t, body)
-			for _, want := range []string{"AgentCore 日志", `action="/manage-test/agentcore/logs"`, `href="/manage-test/agentcore"`, fmt.Sprintf(`value="%d" selected`, lines), "刷新", "返回 AgentCore", "journal &lt;script&gt;", "error &lt;script&gt;"} {
+			for _, want := range []string{"AgentCore 日志", `class="logbar"`, `href="/manage-test/agentcore"`, fmt.Sprintf(`class="btn active" href="/manage-test/agentcore/logs?lines=%d"`, lines), "刷新", "返回 AgentCore", "journal &lt;script&gt;", "error &lt;script&gt;"} {
 				if !strings.Contains(body, want) {
 					t.Errorf("missing %q", want)
 				}
 			}
 			for _, value := range []string{"100", "200", "500", "1000"} {
-				if !strings.Contains(body, `value="`+value+`"`) {
+				if !strings.Contains(body, `href="/manage-test/agentcore/logs?lines=`+value+`"`) {
 					t.Errorf("missing option %s", value)
 				}
 			}
@@ -59,6 +59,11 @@ func assertAgentCoreLogsLayout(t *testing.T, body string) {
 	}
 	if strings.Count(content, `href="/manage-test/agentcore"`) != 1 || regexp.MustCompile(`>\s*返回(?: AgentCore)?\s*<`).MatchString(content) {
 		t.Error("logs must not have a duplicate or bottom text back button")
+	}
+	bar := strings.Index(content, `<div class="logbar">`)
+	card := strings.Index(content, `<div class="card">`)
+	if bar < 0 || card < 0 || bar >= card || strings.Contains(content[card:], `<div class="logbar">`) || strings.Contains(content, "<select") {
+		t.Error("logs filters must use the operation-log button bar outside the details card")
 	}
 	// Check the rendered fragment without browser HTML repair hiding broken tags.
 	var stack []string
@@ -255,7 +260,7 @@ func TestAgentCoreLogsRoute(t *testing.T) {
 		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "AgentCore 日志") {
 			t.Fatalf("%s: %d %s", query, w.Code, w.Body)
 		}
-		if !strings.Contains(w.Body.String(), fmt.Sprintf(`value="%d" selected`, logLines(r))) {
+		if !strings.Contains(w.Body.String(), fmt.Sprintf(`class="btn active" href="/manage-test/agentcore/logs?lines=%d"`, logLines(r))) {
 			t.Errorf("wrong line selection for %s", query)
 		}
 	}
