@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>AgentCore 日</h1>志</h1>
+<div class="card">
+  <form method="get" action="{{.Base}}/agentcore/logs" class="service-actions">
+    <label for="agentcore-log-lines">日志行数</label>
+    <select id="agentcore-log-lines" name="lines">
+      <option value="100" {{if eq .Data.LogLines 100}}selected{{end}}>100</option>
+      <option value="200" {{if eq .Data.LogLines 200}}selected{{end}}>200</option>
+      <option value="500" {{if eq .Data.LogLines 500}}selected{{end}}>500</option>
+      <option value="1000" {{if eq .Data.LogLines 1000}}selected{{end}}>1000</option>
+    </select>
+    <button type="submit" class="btn">{{icon "rotate-cw"}}刷新</button>
+    <a class="btn" href="{{.Base}}/agentcore">返回 AgentCore</a>
+  </form>
+  {{if .Data.LogError}}<p class="warning">{{.Data.LogError}}</p>{{end}}
+  <pre class="logs">{{.Data.LogContent}}</pre>
+</div>
+{{end}}

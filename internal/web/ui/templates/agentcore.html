@@ -1,4 +1,5 @@
 {{define "content"}}
+<link rel="stylesheet" href="{{.Base}}/static/agentcore-chat.css">
 <h1>AgentCore</h1>
 <div class="cards"><div class="card">
   <h3>{{icon "power"}}服务控制</h3>
@@ -18,13 +19,31 @@
       {{if .Data.Enabled}}<button name="action" value="disable" class="btn" data-confirm="关闭 AgentCore 开机自启？">{{icon "x"}}关闭自启</button>{{else}}<button name="action" value="enable" class="btn" {{if not .Data.Installed}}disabled{{end}}>{{icon "check"}}开启自启</button>{{end}}
     </form>
     <a class="btn" href="{{.Base}}/agentcore/config">{{icon "pencil"}}编辑配置</a>
+    <a class="btn" href="{{.Base}}/agentcore/logs">{{icon "scroll-text"}}查看日志</a>
   </div>
   <div id="agent-restart-progress" class="operation-progress hidden" role="status" aria-live="polite"><div class="operation-progress-head"><span class="spinner" aria-hidden="true"></span><strong data-operation-title>准备重启 AgentCore</strong></div><div class="operation-progress-track"><span data-operation-bar></span></div><p data-operation-message>正在提交请求…</p></div>
-  <p class="muted">配置：<code>{{.Data.ConfigPath}}</code> · 工作目录：<code>{{.Data.WorkDir}}</code></p>
-  <p class="muted">首次安装后请在配置页填写模型 ID 和 API Key，保存后即可使用 AgentCore。</p>
+
 </div></div>
-<h2>{{icon "scroll-text"}}AgentCore 日志</h2>
-<p class="muted">来自 systemd journal 的 AgentCore 运行日志（最新在最后）。</p>
-<div class="actions"><a class="btn {{if eq .Data.LogLines 100}}active{{end}}" href="{{.Base}}/agentcore?lines=100">100</a><a class="btn {{if eq .Data.LogLines 200}}active{{end}}" href="{{.Base}}/agentcore?lines=200">200</a><a class="btn {{if eq .Data.LogLines 500}}active{{end}}" href="{{.Base}}/agentcore?lines=500">500</a><a class="btn {{if eq .Data.LogLines 1000}}active{{end}}" href="{{.Base}}/agentcore?lines=1000">1000</a><a class="btn" href="{{.Base}}/agentcore?lines={{.Data.LogLines}}">{{icon "refresh-cw"}}刷新</a></div>
-{{if .Data.LogError}}<div class="warning">{{.Data.LogError}}</div>{{else}}<pre class="preview">{{.Data.LogContent}}</pre>{{end}}
+<section id="agent-chat" class="agent-chat" aria-label="AgentCore 会话" data-api="{{.Base}}/agentcore/api" data-csrf="{{.CSRF}}" data-enabled="{{if .Data.Installed}}{{if .Data.Active}}true{{else}}false{{end}}{{else}}false{{end}}">
+  <aside class="agent-chat-history" aria-label="历史会话">
+    <div class="agent-chat-toolbar"><h2>历史会话</h2><button id="agent-chat-refresh" class="btn" type="button" disabled>刷新</button></div>
+    <button id="agent-chat-new" class="btn" type="button" disabled>＋ 新会话</button>
+    <p id="agent-chat-list-status" class="muted" role="status"></p>
+    <div id="agent-chat-list" class="agent-chat-list"></div>
+  </aside>
+  <div class="agent-chat-main">
+    <div class="agent-chat-toolbar"><h2 id="agent-chat-title">新会话</h2><span class="muted">AgentCore</span></div>
+    <div id="agent-chat-messages" class="agent-chat-messages" role="log" aria-label="会话消息" aria-live="polite"></div>
+    <button id="agent-chat-bottom" class="btn hidden" type="button">滚动到最新消息 ↓</button>
+    <p id="agent-chat-status" class="muted" role="status">{{if .Data.Installed}}{{if .Data.Active}}准备就绪{{else}}服务未运行，启动后刷新页面以使用会话。{{end}}{{else}}AgentCore 未安装，暂不可使用会话。{{end}}</p>
+    <p id="agent-chat-error" class="warning hidden" role="alert"></p>
+    <form id="agent-chat-form" class="agent-chat-composer">
+      <label for="agent-chat-input">消息</label>
+      <textarea id="agent-chat-input" rows="3" placeholder="输入消息…" disabled></textarea>
+      <div class="agent-chat-toolbar"><span class="muted">Enter 发送 · Shift+Enter 换行</span><div class="agent-chat-buttons"><button id="agent-chat-stop" class="btn" type="button" disabled>停止</button><button id="agent-chat-send" class="btn primary" type="submit" disabled>发送</button></div></div>
+    </form>
+    <noscript><p class="warning">会话功能需要启用 JavaScript。</p></noscript>
+  </div>
+</section>
+<script src="{{.Base}}/static/agentcore-chat.js" defer></script>
 {{end}}

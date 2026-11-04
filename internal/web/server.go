@@ -209,6 +209,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
 	s.mux.HandleFunc("GET "+bp+"/agentcore", s.protect(s.handleAgentCore))
+	s.mux.HandleFunc("GET "+bp+"/agentcore/logs", s.protect(s.handleAgentCoreLogs))
+	s.mux.HandleFunc("GET "+bp+"/agentcore/api/conversations", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("GET "+bp+"/agentcore/api/conversations/{id}", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("GET "+bp+"/agentcore/api/conversations/{id}/logs", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/api/chat", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/api/chat/stream", s.protect(s.handleAgentCoreAPI))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/api/chat/{id}/stop", s.protect(s.handleAgentCoreAPI))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/install", s.protect(s.handleAgentCoreInstall))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/update/check", s.protect(s.handleAgentCoreUpdateCheck))
 	s.mux.HandleFunc("POST "+bp+"/agentcore/service", s.protect(s.handleAgentCoreService))
@@ -336,7 +343,13 @@ func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 		if r.Method == http.MethodPost {
 			recorder := &statusRecorder{ResponseWriter: w}
 			started := time.Now()
-			if subtle.ConstantTimeCompare([]byte(r.FormValue("_csrf")), []byte(sess.CSRF)) != 1 {
+			var csrf string
+			if strings.HasPrefix(r.URL.Path, s.Cfg.BasePath+"/agentcore/api/") {
+				csrf = r.Header.Get("X-CSRF-Token")
+			} else {
+				csrf = r.FormValue("_csrf")
+			}
+			if subtle.ConstantTimeCompare([]byte(csrf), []byte(sess.CSRF)) != 1 {
 				http.Error(recorder, "CSRF 校验失败", http.StatusForbidden)
 				s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
 				return

@@ -361,7 +361,7 @@ func TestAgentCorePagesRenderControls(t *testing.T) {
 	server.render(page, request, "agentcore", "AgentCore", map[string]any{
 		"Installed": true, "Active": true, "Enabled": true, "Version": "v0.4.0", "LogLines": 200,
 	})
-	for _, want := range []string{"AgentCore", "/manage-test/agentcore/config", "data-service-label=\"AgentCore\"", "AgentCore 日志"} {
+	for _, want := range []string{"AgentCore", "/manage-test/agentcore/config", "data-service-label=\"AgentCore\"", "/manage-test/agentcore/logs", "id=\"agent-chat-messages\""} {
 		if !strings.Contains(page.Body.String(), want) {
 			t.Fatalf("AgentCore page missing %q", want)
 		}

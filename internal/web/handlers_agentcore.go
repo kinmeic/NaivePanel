@@ -14,8 +14,12 @@ import (
 
 func (s *Server) handleAgentCore(w http.ResponseWriter, r *http.Request) {
 	installed := s.Agent.Installed()
+	s.render(w, r, "agentcore", "AgentCore", map[string]any{"Installed": installed, "Active": installed && sysd.IsActive("agent-core"), "Enabled": installed && sysd.IsEnabled("agent-core"), "Version": s.Agent.VersionTag(), "ConfigPath": s.Cfg.AgentCore.ConfigPath, "WorkDir": s.Cfg.AgentCore.WorkDir})
+}
+
+func (s *Server) handleAgentCoreLogs(w http.ResponseWriter, r *http.Request) {
 	lines, logs, logErr := readServiceLog(r, "agent-core")
-	s.render(w, r, "agentcore", "AgentCore", map[string]any{"Installed": installed, "Active": installed && sysd.IsActive("agent-core"), "Enabled": installed && sysd.IsEnabled("agent-core"), "Version": s.Agent.VersionTag(), "ConfigPath": s.Cfg.AgentCore.ConfigPath, "WorkDir": s.Cfg.AgentCore.WorkDir, "LogLines": lines, "LogContent": logs, "LogError": logErr})
+	s.render(w, r, "agentcore_logs", "AgentCore 日志", map[string]any{"LogLines": lines, "LogContent": logs, "LogError": logErr})
 }
 func (s *Server) handleAgentCoreInstall(w http.ResponseWriter, r *http.Request) {
 	s.agentMu.Lock()
