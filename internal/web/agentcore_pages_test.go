@@ -118,7 +118,11 @@ func TestAgentCorePageRoutesProtected(t *testing.T) {
 				}
 				w := httptest.NewRecorder()
 				s.mux.ServeHTTP(w, r)
-				if w.Code != http.StatusSeeOther || w.Header().Get("Location") != login {
+				if strings.HasPrefix(route.path, "/agentcore/api/") {
+					if w.Code != http.StatusUnauthorized || w.Header().Get("Location") != "" || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("X-Panel-Session-Invalid") != "1" {
+						t.Fatalf("API status %d location %q cache %q", w.Code, w.Header().Get("Location"), w.Header().Get("Cache-Control"))
+					}
+				} else if w.Code != http.StatusSeeOther || w.Header().Get("Location") != login {
 					t.Fatalf("status %d location %q", w.Code, w.Header().Get("Location"))
 				}
 			}
@@ -130,6 +134,50 @@ func TestAgentCorePageRoutesProtected(t *testing.T) {
 		_, pattern := s.mux.Handler(r)
 		if strings.Contains(pattern, "/agentcore/api/") {
 			t.Errorf("unexpected route %q", pattern)
+		}
+	}
+}
+
+func TestAgentCoreSendAfterLogoutRejected(t *testing.T) {
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+	s, err := New(testConfig(t), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Agent = agentCoreProxyServer(t, upstream.URL).Agent
+	token, session, err := s.Sessions.Create("admin", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(path string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, s.Cfg.BasePath+path, strings.NewReader(`{"message":"hello"}`))
+		r.AddCookie(&http.Cookie{Name: "np_session", Value: token})
+		r.Header.Set("X-CSRF-Token", session.CSRF)
+		return r
+	}
+	before := httptest.NewRecorder()
+	s.mux.ServeHTTP(before, request("/agentcore/api/chat"))
+	if before.Code != http.StatusAccepted || calls.Load() != 1 {
+		t.Fatalf("before logout: status %d, upstream calls %d", before.Code, calls.Load())
+	}
+	logout := httptest.NewRequest(http.MethodPost, s.Cfg.BasePath+"/logout", strings.NewReader("_csrf="+session.CSRF))
+	logout.AddCookie(&http.Cookie{Name: "np_session", Value: token})
+	logout.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loggedOut := httptest.NewRecorder()
+	s.mux.ServeHTTP(loggedOut, logout)
+	if loggedOut.Code != http.StatusSeeOther || s.Sessions.Get(token) != nil {
+		t.Fatalf("logout: status %d, session still active: %v", loggedOut.Code, s.Sessions.Get(token) != nil)
+	}
+	for _, path := range []string{"/agentcore/api/chat", "/agentcore/api/chat/stream"} {
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, request(path))
+		if w.Code != http.StatusUnauthorized || w.Header().Get("X-Panel-Session-Invalid") != "1" || calls.Load() != 1 {
+			t.Fatalf("after logout %s: status %d, upstream calls %d", path, w.Code, calls.Load())
 		}
 	}
 }
@@ -188,6 +236,9 @@ func TestAgentCoreAPIRouteCSRF(t *testing.T) {
 			}
 			if csrf != session.CSRF && calls.Load() != before {
 				t.Error("CSRF rejection contacted upstream")
+			}
+			if csrf != session.CSRF && w.Header().Get("X-Panel-Session-Invalid") != "1" {
+				t.Error("CSRF rejection must mark the stale panel session")
 			}
 		}
 	}

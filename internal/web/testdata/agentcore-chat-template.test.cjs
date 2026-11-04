@@ -77,6 +77,9 @@ test('composer starts idle with send visible and stop hidden', () => {
     assert.equal(node.attrs.class.split(/\s+/).includes('hidden'), hidden);
   }
 });
+test('unknown context leaves the ring label empty', () => {
+  assert.match(template, /<span id="agent-chat-usage-label"><\/span>/);
+});
 
 test('toolbar validation rejects misplaced controls and interactive settings', () => {
   const settings = template.match(/<span id="agent-chat-settings"[^>]*>[\s\S]*?<\/span>/)[0];

@@ -197,6 +197,54 @@ function assertComposerBusy(h, busy) {
   assert.equal(h.el('send').classList.contains('hidden'), busy, 'send is hidden only while busy');
   assert.equal(h.el('stop').classList.contains('hidden'), !busy, 'stop is hidden only while idle');
 }
+test('expired login locks an already open chat after a rejected send', async () => {
+  const h = harness(url => url.endsWith('/chat/stream') ? { ok: false, status: 401, headers: { get: name => name === 'X-Panel-Session-Invalid' ? '1' : null } } : null);
+  await tick();
+  h.el('input').value = 'task';
+  await h.el('form').events.submit({ preventDefault() {} });
+  assert.equal(h.calls.filter(c => c.url.endsWith('/chat/stream')).length, 1);
+  assert.equal(h.el('input').disabled, true);
+  assert.equal(h.el('send').disabled, true);
+  assert.match(h.el('error').textContent, /登录已失效/);
+  assert.doesNotMatch(h.el('messages').textContent, /task/);
+  h.el('input').value = 'another task';
+  await h.el('form').events.submit({ preventDefault() {} });
+  assert.equal(h.calls.filter(c => c.url.endsWith('/chat/stream')).length, 1);
+});
+test('upstream 401 does not masquerade as a panel logout', async () => {
+  const h = harness(url => url.endsWith('/chat/stream') ? { ok: false, status: 401, headers: { get: () => null }, json: async () => ({ error: 'upstream token rejected' }) } : null);
+  await tick(); h.el('input').value = 'task';
+  await h.el('form').events.submit({ preventDefault() {} });
+  assert.equal(h.el('input').disabled, false);
+  assert.match(h.el('error').textContent, /HTTP 401/);
+});
+test('stale CSRF locks an old chat tab', async () => {
+  const h = harness(url => url.endsWith('/chat/stream') ? { ok: false, status: 403, headers: { get: name => name === 'X-Panel-Session-Invalid' ? '1' : null } } : null);
+  await tick(); h.el('input').value = 'task';
+  await h.el('form').events.submit({ preventDefault() {} });
+  assert.equal(h.el('input').disabled, true);
+  assert.match(h.el('error').textContent, /登录已失效/);
+});
+test('clarification choices and custom answer share one explicit submit action', async () => {
+  const h = harness(); await tick(); h.el('input').value = 'task';
+  const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+  h.emit({ type: 'conv_id', conversation_id: 'clarify-conv' });
+  h.emit({ type: 'clarify', request_id: 'clarify-request', clarify_message: '请选择布局', clarify_options: ['紧凑', '宽松'] });
+  await tick();
+  const options = h.el('requests').querySelectorAll('button');
+  assert.equal(options.length, 3);
+  await options[2].events.click();
+  assert.match(h.el('requests').textContent, /请选择一个选项或填写回答/);
+  assert.equal(h.calls.filter(c => c.url.endsWith('/clarify')).length, 0);
+  options[1].events.click();
+  assert.equal(options[1].attrs['aria-pressed'], 'true');
+  assert.equal(h.el('requests').querySelectorAll('textarea')[0].value, '宽松');
+  await options[2].events.click();
+  const posts = h.calls.filter(c => c.url.endsWith('/clarify'));
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0].init.body), { response: '宽松' });
+  h.emit({ type: 'done', reply: 'done' }); await run;
+});
 for (const terminal of ['done', 'cancelled', 'error', 'EOF']) {
   test(`send/stop hidden classes stay mutually exclusive through ${terminal}`, async () => {
     const h = harness(); await tick();

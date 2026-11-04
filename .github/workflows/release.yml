@@ -15,13 +15,18 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.10"
+          go-version: "1.27.3"
           check-latest: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Vet & test
         run: |
           go vet ./...
           go test ./...
+          node --test internal/web/testdata/*.test.cjs
 
       - name: Cross-compile (linux amd64 + arm64)
         run: |

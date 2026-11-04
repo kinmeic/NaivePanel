@@ -6,6 +6,12 @@
   var enabled = root.dataset.enabled === "true", current = "", busy = false, loading = false, ready = true;
   var generation = 0, listGeneration = 0, historyController, streamController, stopping = false, stopped = false;
   var input = el("input"), messages = el("messages"), list = el("list"), follow = true, options = {}, usageInfo = null;
+  var requestOverlay = el("requests");
+  function updateRequestInset() {
+    root.style.setProperty("--agent-request-height", requestOverlay.offsetHeight ? requestOverlay.offsetHeight + "px" : "0px");
+  }
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(updateRequestInset).observe(requestOverlay);
+  window.addEventListener("resize", updateRequestInset);
   var sessions = new Map(), deleting = new Set(), liveStates = new Map(), statusQueue = [], statusActive = 0, statusEpoch = 0, statusTimer = null, statusController, pageStopped = false;
     var pending = new Map(), optionsReady = false, conversationMetadata = {}, preferencesKnown = true;
     var selectedMode = "build", confirmedMode = "", savingPreferences = false;
@@ -52,6 +58,20 @@
   function node(tag, text, cls) { var n = document.createElement(tag); n.textContent = text || ""; if (cls) n.className = cls; return n; }
   function error(text) { el("error").textContent = text; el("error").classList.toggle("hidden", !text); }
   function status() {}
+  function lockAuth() {
+    if (!enabled) return;
+    enabled = false; pageStopped = true;
+    stopStatus();
+    if (historyController) historyController.abort();
+    if (streamController) streamController.abort();
+    ++listGeneration; ++generation;
+    busy = false; loading = false; savingPreferences = false;
+    sessions.clear(); liveStates.clear(); pending.clear();
+    list.replaceChildren(); requestOverlay.replaceChildren(); updateRequestInset(); input.value = ""; current = "";
+    empty("登录已失效，请重新登录后刷新页面。");
+    error("登录已失效，请重新登录后刷新页面。");
+    controls();
+  }
   function controls() {
     input.disabled = !enabled || busy || loading || savingPreferences || !ready;
         var session = sessions.get(current);
@@ -64,18 +84,23 @@
     el("stop").disabled = !busy || !current || stopping || stopped;
     el("stop").title = !current && busy ? "等待流返回会话 ID" : "请求停止当前运行";
     sessions.forEach(function (s, id) {
-          s.open.disabled = busy || savingPreferences || deleting.has(id);
-          s.remove.disabled = busy || savingPreferences || deleting.has(id) || ["unknown", "running", "waiting"].indexOf(s.state) >= 0;
+          s.open.disabled = !enabled || busy || savingPreferences || deleting.has(id);
+          s.remove.disabled = !enabled || busy || savingPreferences || deleting.has(id) || ["unknown", "running", "waiting"].indexOf(s.state) >= 0;
         });
     messages.setAttribute("aria-busy", String(busy || loading));
   }
   async function request(path, body, signal, stream) {
+    if (!enabled) throw new Error("登录已失效，请重新登录后刷新页面。");
     var headers = { Accept: stream ? "text/event-stream" : "application/json", "X-CSRF-Token": root.dataset.csrf };
     var init = { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: headers, signal: signal };
     if (body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
     var response;
         try { response = await fetch(root.dataset.api + path, init); }
         catch (err) { if (err.name !== "AbortError") err.retryable = true; throw err; }
+    if ((response.status === 401 || response.status === 403) && response.headers && response.headers.get("X-Panel-Session-Invalid") === "1") {
+      lockAuth();
+      throw new Error("登录已失效，请重新登录后刷新页面。");
+    }
     if (!response.ok) {
       var detail = ""; try { var data = await response.json(); detail = data.error || data.message || ""; } catch (_) { /* Do not render server HTML. */ }
       var failure = new Error("HTTP " + response.status + (typeof detail === "string" && detail ? "：" + detail : ""));
@@ -169,7 +194,7 @@
   function updateUsage(info) {
     usageInfo = info; var u = core.usage(info, options);
     el("ring").style.setProperty("--usage", (u.percent || 0) + "%");
-    el("usage-label").textContent = u.percent === null ? "上下文未知" : u.percent.toFixed(1) + "%";
+    el("usage-label").textContent = u.percent === null ? "" : u.percent.toFixed(1) + "%";
     el("usage").textContent = "窗口：" + (u.window || "未知") + " tokens\n最大输出：" + (options.max_output_tokens || "未知") + "\n后端 context_tokens：" + (u.context === null ? "未知" : u.context) + "\n累计输入：" + (info ? u.prompt : "未知") + "\n累计输出：" + (info ? u.completion : "未知") + "\n累计总量：" + (info ? u.total : "未知") ;
   }
   async function loadOptions() {
@@ -279,40 +304,58 @@
       el("list-status").textContent = sessions.size ? "" : "暂无历史会话"; controls(); pollStatus();
     } catch (err) { if (token === listGeneration) el("list-status").textContent = "加载失败：" + err.message + "；点击刷新重试"; }
   }
-  function clearPending() { pending.clear(); el("requests").replaceChildren(); }
+  function clearPending() { pending.clear(); requestOverlay.replaceChildren(); updateRequestInset(); }
   function ask(event, clarify) {
     var id = event.request_id;
     if (!id) { error("待处理请求缺少 request_id，无法安全提交。"); return; }
     if (pending.has(id)) return;
     var token = generation, conversation = current, box = node("section", "", "agent-chat-request"), sending = false;
     box.setAttribute("aria-label", clarify ? "需要澄清" : "工具权限审批");
-    box.appendChild(node("strong", clarify ? "需要你的回答" : "工具执行需要授权：" + (event.tool || "工具")));
-    box.appendChild(node("pre", clarify ? event.clarify_message : event.preview));
-    if (!clarify) box.appendChild(node("small", "授权可能产生文件或系统变更。会话允许仅适用于当前工具，AlwaysAsk 工具仍会再次询问。"));
+    var header = node("div", "", "agent-chat-request-header");
+    header.appendChild(node("strong", clarify ? "需要你的回答" : "工具执行需要授权：" + (event.tool || "工具")));
+    box.appendChild(header);
+    var content = node("div", "", "agent-chat-request-body");
+    content.appendChild(node("pre", clarify ? event.clarify_message : event.preview));
+    if (!clarify) content.appendChild(node("small", "授权可能产生文件或系统变更。会话允许仅适用于当前工具，AlwaysAsk 工具仍会再次询问。"));
     var answer;
     if (clarify) {
-      answer = node("textarea"); answer.setAttribute("aria-label", "澄清回答"); box.appendChild(answer);
-      (event.clarify_options || []).forEach(function (value) { var b = node("button", value, "btn"); b.type = "button"; b.addEventListener("click", function () { answer.value = value; }); box.appendChild(b); });
+      var optionsList = node("div", "", "agent-chat-clarify-options"), optionButtons = [];
+      answer = node("textarea"); answer.setAttribute("aria-label", "自定义澄清回答"); answer.placeholder = "选择一个选项，或在这里输入回答…";
+      (event.clarify_options || []).filter(function (value) { return typeof value === "string" && value.trim(); }).forEach(function (value) {
+        var option = node("button", value, "agent-chat-clarify-option"); option.type = "button"; option.setAttribute("aria-pressed", "false");
+        option.addEventListener("click", function () {
+          if (sending) return;
+          answer.value = value;
+          optionButtons.forEach(function (button) { button.setAttribute("aria-pressed", String(button === option)); });
+        });
+        optionButtons.push(option); optionsList.appendChild(option);
+      });
+      if (optionButtons.length) content.appendChild(optionsList);
+      answer.addEventListener("input", function () { optionButtons.forEach(function (button) { button.setAttribute("aria-pressed", String(button.textContent === answer.value)); }); });
+      content.appendChild(answer);
     }
+    box.appendChild(content);
+    var footer = node("div", "", "agent-chat-request-footer"); box.appendChild(footer);
+    var hint = node("span", "", "agent-chat-request-hint"); footer.appendChild(hint);
     var buttons = [];
     function action(label, decision, scope) {
-      var b = node("button", label, "btn"); b.type = "button"; buttons.push(b); box.appendChild(b);
+      var b = node("button", label, clarify ? "btn primary" : "btn"); b.type = "button"; buttons.push(b); footer.appendChild(b);
       b.addEventListener("click", async function () {
         if (sending || token !== generation || !pending.has(id)) return;
-        if (clarify && !answer.value.trim()) return;
-        sending = true; buttons.forEach(function (button) { button.disabled = true; });
+        if (clarify && !answer.value.trim()) { hint.textContent = "请选择一个选项或填写回答"; answer.focus(); return; }
+        hint.textContent = ""; sending = true; box.querySelectorAll("button").forEach(function (button) { button.disabled = true; });
         try {
           var result = await request(clarify ? "/chat/" + encodeURIComponent(conversation) + "/clarify" : "/approvals/" + encodeURIComponent(id), clarify ? { response: answer.value.trim() } : { decision: decision, scope: scope });
           if (token !== generation || !pending.has(id)) return;
           if (!result || result.delivered !== true) throw new Error("请求已过期或未送达");
-          pending.delete(id); box.remove(); status("回答已提交，等待服务继续…");
+          pending.delete(id); box.remove(); updateRequestInset(); status("回答已提交，等待服务继续…");
         } catch (err) { if (token === generation) error("提交失败：" + err.message + "；可重试，或刷新历史确认运行状态。"); }
-        finally { sending = false; buttons.forEach(function (button) { button.disabled = false; }); }
+        finally { sending = false; box.querySelectorAll("button").forEach(function (button) { button.disabled = false; }); }
       });
     }
     if (clarify) action("提交回答");
     else { action("仅本次允许", "allow", "once"); action("此会话允许", "allow", "conversation"); action("拒绝", "deny", "once"); }
-    pending.set(id, box); el("requests").appendChild(box);
+    pending.set(id, box); requestOverlay.appendChild(box); updateRequestInset(); scroll(false);
   }
   async function recoverApprovals(token, id) {
     try { var data = await request("/approvals"); if (token !== generation || current !== id) return;

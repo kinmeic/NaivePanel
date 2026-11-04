@@ -339,12 +339,25 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // protect requires a fully-authenticated session and validates CSRF on POST.
 func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		agentAPI := strings.HasPrefix(r.URL.Path, s.Cfg.BasePath+"/agentcore/api/")
 		sess := s.session(r)
 		if sess == nil {
+			if agentAPI {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("X-Panel-Session-Invalid", "1")
+				http.Error(w, "登录已失效", http.StatusUnauthorized)
+				return
+			}
 			http.Redirect(w, r, s.Cfg.BasePath+"/login", http.StatusSeeOther)
 			return
 		}
 		if sess.IsPendingMFA() {
+			if agentAPI {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("X-Panel-Session-Invalid", "1")
+				http.Error(w, "请完成二次验证", http.StatusUnauthorized)
+				return
+			}
 			http.Redirect(w, r, s.Cfg.BasePath+"/login/totp", http.StatusSeeOther)
 			return
 		}
@@ -352,12 +365,16 @@ func (s *Server) protect(h http.HandlerFunc) http.HandlerFunc {
 			recorder := &statusRecorder{ResponseWriter: w}
 			started := time.Now()
 			var csrf string
-			if strings.HasPrefix(r.URL.Path, s.Cfg.BasePath+"/agentcore/api/") {
+			if agentAPI {
 				csrf = r.Header.Get("X-CSRF-Token")
 			} else {
 				csrf = r.FormValue("_csrf")
 			}
 			if subtle.ConstantTimeCompare([]byte(csrf), []byte(sess.CSRF)) != 1 {
+				if agentAPI {
+					w.Header().Set("Cache-Control", "no-store")
+					w.Header().Set("X-Panel-Session-Invalid", "1")
+				}
 				http.Error(recorder, "CSRF 校验失败", http.StatusForbidden)
 				s.logOperation(sess.User, r, recorder.statusCode(), time.Since(started))
 				return

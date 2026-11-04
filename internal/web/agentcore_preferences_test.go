@@ -143,7 +143,7 @@ func TestAgentCorePreferencesProtection(t *testing.T) {
 		name, cookie, csrf string
 		want               int
 	}{
-		{"anonymous", "", "", 303},
+		{"anonymous", "", "", 401},
 		{"missing CSRF", token, "", 403},
 		{"wrong CSRF", token, "wrong", 403},
 		{"authenticated", token, session.CSRF, 400},
