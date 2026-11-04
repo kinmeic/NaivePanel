@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const core = require('../ui/static/agentcore-chat-core.js');
 class Node {
-  constructor(tag = '') { this.tag = tag; this.children = []; this.attrs = {}; this.events = {}; this.dataset = {}; this.value = ''; this.style = { setProperty() {} }; this.classList = { toggle() {} }; this.scrollHeight = 0; this.scrollTop = 0; this.clientHeight = 0; }
+  constructor(tag = '') { this.tag = tag; this.children = []; this.attrs = {}; this.events = {}; this.dataset = {}; this.value = ''; this.style = { setProperty() {} }; this.classList = { contains: name => (this.className || '').split(/\s+/).includes(name), toggle: (name, force) => { const classes = new Set((this.className || '').split(/\s+/).filter(Boolean)); const add = force === undefined ? !classes.has(name) : force; if (add) classes.add(name); else classes.delete(name); this.className = [...classes].join(' '); return add; } }; this.scrollHeight = 0; this.scrollTop = 0; this.clientHeight = 0; }
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return (this.text || '') + this.children.map(n => n.textContent).join(''); }
   appendChild(n) { if (n.tag === '#fragment') { for (const c of n.children) this.appendChild(c); return n; } n.parent = this; this.children.push(n); return n; }
@@ -12,11 +12,11 @@ class Node {
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(n => n !== this); }
   setAttribute(k, v) { this.attrs[k] = v; }
   addEventListener(k, f) { this.events[k] = f; }
-  querySelectorAll(selector) { return this.children.flatMap(n => (n.tag === selector ? [n] : []).concat(n.querySelectorAll(selector))); }
+  querySelectorAll(selector) { return this.children.flatMap(n => ((selector[0] === '.' ? n.classList.contains(selector.slice(1)) : n.tag === selector) ? [n] : []).concat(n.querySelectorAll(selector))); }
   querySelector(selector) { if (selector[0] === '.') return null; return this.querySelectorAll(selector)[0]; }
   focus() {}
 }
-function documentMock() { return { createElement: t => new Node(t), createTextNode: t => { const n = new Node('#text'); n.textContent = t; return n; }, createDocumentFragment: () => new Node('#fragment') }; }
+function documentMock() { return { addEventListener() {}, createElementNS: (_, t) => new Node(t), createElement: t => new Node(t), createTextNode: t => { const n = new Node('#text'); n.textContent = t; return n; }, createDocumentFragment: () => new Node('#fragment') }; }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 test('SSE handles BOM, comments, split CRLF, multiline data and EOF', () => {
   const got = [], parser = core.sse((e, name) => got.push([e, name]));
@@ -127,7 +127,14 @@ test('usage is unknown without a window or measured usage, clamps ring only', ()
 });
 function harness(override, confirm = () => false) {
   const doc = documentMock(), nodes = {}, calls = [], encoder = new TextEncoder(); let stream;
-  doc.getElementById = id => nodes[id] ||= new Node();
+    const documentEvents = {}; doc.addEventListener = (name, fn) => { documentEvents[name] = fn; };
+  const template = fs.readFileSync(require.resolve('../ui/templates/agentcore.html'), 'utf8');
+  for (const match of template.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
+    const node = nodes[match[2]] = new Node(match[1]);
+    node.className = match[0].match(/\bclass="([^"]*)"/)?.[1] || '';
+    node.disabled = /\sdisabled\b/.test(match[0]);
+  }
+  doc.getElementById = id => nodes[id] || null;
   const root = doc.getElementById('agent-chat'); root.dataset = { enabled: 'true', csrf: 'csrf-test', api: '/panel/agentcore/api' };
   const response = data => ({ ok: true, json: async () => data });
   const fetch = async (url, init) => {
@@ -136,14 +143,36 @@ function harness(override, confirm = () => false) {
     if (url.endsWith('/options')) return response({ model: 'actual', reasoning_effort: 'high', context_window: 100, approval_mode: 'yolo' });
     if (url.endsWith('/conversations') || url.endsWith('/approvals')) return response([]);
     if (url.endsWith('/chat/stream')) return { ok: true, headers: { get: () => 'text/event-stream' }, body: new ReadableStream({ start(controller) { stream = controller; } }) };
+    if (url.endsWith('/runs?limit=100')) return response([]);
     if (url.endsWith('/stop')) return response({ stopped: true });
     return response({ delivered: true });
   };
-  const copied = [], timers = [];
-    const window = { AgentChatCore: core, confirm, addEventListener() {}, setTimeout(fn) { timers.push(fn); } };
+  const copied = [], timers = [], delays = [], activeTimers = new Set(), events = {}, scheduled = new Map();
+  let now = 0, nextTimer = 0;
+  const window = {
+    AgentChatCore: core, confirm, addEventListener(name, fn) { events[name] = fn; },
+    setTimeout(fn, delay) {
+      const id = nextTimer++;
+      const fire = () => { if (!activeTimers.delete(id)) return; scheduled.delete(id); fn(); };
+      scheduled.set(id, { at: now + delay, fire }); activeTimers.add(id);
+      // Keep the existing explicit retry/copy timer helpers separate from read watchdogs.
+      if (delay !== 45000 && delay !== 30000) { timers.push(fire); delays.push(delay); }
+      return id;
+    },
+    clearTimeout(id) { activeTimers.delete(id); scheduled.delete(id); }
+  };
+  async function advance(ms) {
+    const target = now + ms;
+    while (true) {
+      const next = [...scheduled.values()].filter(t => t.at <= target).sort((a, b) => a.at - b.at)[0];
+      if (!next) break;
+      now = next.at; next.fire(); await tick();
+    }
+    now = target; await tick();
+  }
   vm.runInNewContext(fs.readFileSync(require.resolve('../ui/static/agentcore-chat.js'), 'utf8'), { window, document: doc, fetch, AbortController, TextDecoder, Map, Set, navigator: { clipboard: { writeText: async text => { copied.push(text); } } }, console });
   const el = id => doc.getElementById('agent-chat-' + id);
-  return { el, calls, copied, timers, close() { stream.close(); }, emit(e) { stream.enqueue(encoder.encode('event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n')); } };
+  return { el, calls, copied, timers, delays, activeTimers, advance, visibility(hidden) { doc.hidden = hidden; documentEvents.visibilitychange(); }, pagehide: () => events.pagehide(), close() { stream.close(); }, emit(e) { stream.enqueue(encoder.encode('event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n')); } };
 }
 test('streamed usage estimates from cumulative prompt and prefers reported context tokens', async () => {
   const h = harness(); await tick(); h.el('input').value = 'task';
@@ -160,6 +189,33 @@ test('streamed usage estimates from cumulative prompt and prefers reported conte
   assert.equal(core.usage({ prompt_tokens: -1 }, { context_window: 100 }).percent, null);
   assert.equal(core.usage({ prompt_tokens: 50, context_tokens: 0 }, { context_window: 100 }).estimated, false);
 });
+function assertComposerBusy(h, busy) {
+  assert.equal(h.el('send').classList.contains('hidden'), busy, 'send is hidden only while busy');
+  assert.equal(h.el('stop').classList.contains('hidden'), !busy, 'stop is hidden only while idle');
+}
+for (const terminal of ['done', 'cancelled', 'error', 'EOF']) {
+  test(`send/stop hidden classes stay mutually exclusive through ${terminal}`, async () => {
+    const h = harness(); await tick();
+    assertComposerBusy(h, false);
+    h.el('input').value = 'task';
+    const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+    assertComposerBusy(h, true);
+    assert.equal(h.el('stop').disabled, true);
+    h.emit({ type: 'conv_id', conversation_id: 'visibility' }); await tick();
+    assertComposerBusy(h, true);
+    assert.equal(h.el('stop').disabled, false);
+    if (terminal === 'cancelled') {
+      await h.el('stop').events.click();
+      assertComposerBusy(h, true);
+      assert.equal(h.el('stop').disabled, true);
+    }
+    if (terminal === 'EOF') h.close();
+    else h.emit({ type: terminal, reply: 'done', message: 'failed' });
+    await run;
+    assertComposerBusy(h, false);
+    assert.equal(h.el('stop').disabled, true);
+  });
+}
 test('real stream contract: first-turn ID enables stop, approval uses request_id, clarification uses conversation ID, CSRF on all POSTs', async () => {
   const h = harness(); await tick(); h.el('input').value = 'hello';
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
@@ -192,7 +248,7 @@ test('history requests are aborted and stale responses cannot overwrite a newer 
     if (url.endsWith('/conversations/a/logs')) { signalA = init.signal; return new Promise(resolve => { resolveA = resolve; }); }
     if (url.endsWith('/conversations/b/logs')) return Promise.resolve(response([{ role: 'assistant', content: 'newest B' }]));
   });
-  await tick(); const buttons = h.el('list').children;
+  await tick(); const buttons = h.el('list').querySelectorAll('.agent-chat-session-open');
   buttons[0].events.click(); await tick(); buttons[1].events.click(); await tick();
   assert.equal(signalA.aborted, true);
   resolveA(response([{ role: 'assistant', content: 'stale A' }])); await tick();
@@ -206,18 +262,26 @@ test('EOF before terminal event warns that the backend may still be running', as
   assert.match(h.el('error').textContent, /后台继续/);
   assert.match(h.el('status').textContent, /未确认/);
 });
-test('new conversation sends selected effort/mode and locks selectors after first ID', async () => {
+test('new conversation inherits service effort, sends only selected mode and locks mode after first ID', async () => {
   const h = harness(undefined, () => true); await tick();
   assert.equal(h.el('mode').value, 'build'); // Even when /options says yolo.
-  h.el('effort').value = 'high'; h.el('effort').events.change();
+  assert.equal(h.el('effort'), null);
+  assert.equal(h.el('settings').tag, 'span');
+  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：high');
+  assert.equal(h.el('settings').children.length, 0);
   h.el('mode').value = 'edit'; h.el('mode').events.change();
   h.el('input').value = 'task'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
-  assert.deepEqual(JSON.parse(h.calls.find(c => c.url.endsWith('/chat/stream')).init.body).metadata, { effort: 'high', mode: 'edit' });
+  const body = JSON.parse(h.calls.find(c => c.url.endsWith('/chat/stream')).init.body);
+  assert.deepEqual(body.metadata, { mode: 'edit' });
+  assert.equal(Object.hasOwn(body, 'effort'), false);
   h.emit({ type: 'conv_id', conversation_id: 'new-session' }); await tick();
-  assert.equal(h.el('effort').disabled, true); assert.equal(h.el('mode').disabled, true);
-  assert.match(h.el('preference-note').textContent, /新建会话/);
+  assert.equal(h.el('mode').disabled, true);
+  assert.match(h.el('preference-note').title, /新建会话/);
   h.emit({ type: 'done', reply: 'done' }); await run;
-  h.el('new').events.click(); assert.equal(h.el('mode').value, 'build'); assert.equal(h.el('effort').value, '');
+  h.el('new').events.click(); assert.equal(h.el('mode').value, 'build');
+  assert.equal(h.el('mode').disabled, false);
+  assert.equal(h.el('effort'), null);
+  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：high');
 });
 test('high-risk modes require explicit confirmation and cancellation keeps build', async () => {
   const prompts = [], h = harness(undefined, message => { prompts.push(message); return false; }); await tick();
@@ -234,8 +298,10 @@ test('history restores metadata read-only, prioritizes context_tokens and never 
     if (url.endsWith('/conversations')) return response([{ id: 'saved', title: 'Saved' }]);
     if (url.endsWith('/conversations/saved')) return response({ id: 'saved', metadata });
     if (url.endsWith('/conversations/saved/logs')) return response([{ role: 'assistant', content: 'history', prompt_tokens: 900, context_tokens: 25 }]);
-  }); await tick(); h.el('list').children[0].events.click(); await tick();
-  assert.equal(h.el('effort').value, 'medium'); assert.equal(h.el('mode').value, 'plan');
+  }); await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'plan');
+  assert.equal(h.el('settings').textContent, '模型：custom-model · 思考强度：medium');
+  assert.equal(h.el('settings').tag, 'span'); assert.equal(h.el('settings').children.length, 0);
   assert.equal(h.el('mode').disabled, true); assert.match(h.el('settings').textContent, /custom-model/);
   assert.match(h.el('usage-label').textContent, /25.0%/); assert.match(h.el('usage').textContent, /累计输入：900/);
   h.el('input').value = 'followup'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
@@ -250,7 +316,7 @@ test('restored high-risk permissions still require confirmation before sending',
     if (url.endsWith('/conversations/danger')) return response({ id: 'danger', metadata: { mode: 'yolo' } });
     if (url.endsWith('/conversations/danger/logs')) return response([]);
   }, () => { confirms++; return false; });
-  await tick(); h.el('list').children[0].events.click(); await tick();
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
   assert.equal(h.el('mode').value, 'yolo'); assert.equal(confirms, 0);
   h.el('input').value = 'task'; await h.el('form').events.submit({ preventDefault() {} });
   assert.equal(confirms, 1); assert.ok(!h.calls.some(c => c.url.endsWith('/chat/stream')));
@@ -263,10 +329,11 @@ test('stale detail metadata cannot overwrite a newer conversation or its context
     if (url.endsWith('/conversations/a')) return new Promise(resolve => { resolveA = resolve; });
     if (url.endsWith('/conversations/b')) return Promise.resolve(response({ id: 'b', metadata: { effort: 'low', mode: 'plan' } }));
     if (url.endsWith('/logs')) return Promise.resolve(response([{ role: 'assistant', content: 'saved', context_tokens: 10 }]));
-  }); await tick(); const buttons = h.el('list').children;
+  }); await tick(); const buttons = h.el('list').querySelectorAll('.agent-chat-session-open');
   buttons[0].events.click(); await tick(); buttons[1].events.click(); await tick();
   resolveA(response({ id: 'a', metadata: { effort: 'high', mode: 'yolo' } })); await tick();
-  assert.equal(h.el('effort').value, 'low'); assert.equal(h.el('mode').value, 'plan');
+  assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'plan');
+  assert.equal(h.el('settings').textContent, '模型：actual · 思考强度：low');
   assert.match(h.el('usage-label').textContent, /10.0%/);
 });
 test('failed conversation detail does not invent restored preferences', async () => {
@@ -275,8 +342,9 @@ test('failed conversation detail does not invent restored preferences', async ()
     if (url.endsWith('/conversations')) return response([{ id: 'saved' }]);
     if (url.endsWith('/conversations/saved')) return Promise.resolve({ ok: false, status: 503, json: async () => ({ error: 'unavailable' }) });
     if (url.endsWith('/conversations/saved/logs')) return response([]);
-  }); await tick(); h.el('list').children[0].events.click(); await tick();
-  assert.equal(h.el('effort').value, 'unknown'); assert.equal(h.el('mode').value, 'unknown');
+  }); await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'unknown');
+  assert.equal(h.el('settings').textContent, '模型：未知 · 思考强度：未知');
   assert.match(h.el('settings').textContent, /未知/); assert.match(h.el('error').textContent, /未确认当前设置/);
 });
 test('full-message copy uses latest streamed raw Markdown and resets the correct button label', async () => {
@@ -290,9 +358,231 @@ test('full-message copy uses latest streamed raw Markdown and resets the correct
   await copies[1].events.click(); assert.equal(h.copied[2], '# Final\n```js\nconst x = 1;\n```');
   h.timers.forEach(fn => fn()); assert.equal(copies[1].textContent, '复制消息');
 });
+function retryStream(runID = 'run-1') {
+  let controller, cancelled = false;
+  const response = { ok: true, headers: { get: name => name === 'Content-Type' ? 'text/event-stream' : runID }, body: new ReadableStream({ start(c) { controller = c; }, cancel() { cancelled = true; } }) };
+  return { response, get cancelled() { return cancelled; }, heartbeat() { controller.enqueue(new TextEncoder().encode(': keep-alive\n\n')); }, emit(e) { controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(e) + '\n\n')); }, fail() { controller.error(new TypeError('network lost')); }, close() { controller.close(); } };
+}
+function onlyOneSubmission(h) { assert.equal(h.calls.filter(c => c.init.method === 'POST' && c.url.endsWith('/chat/stream')).length, 1); }
+async function startRetry(h) { await tick(); h.el('input').value = 'hello'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick(); return { run }; }
+
+test('network recovery uses GET after successful sequence, deduplicates text and keeps composer busy', async () => {
+  const first = retryStream(), second = retryStream();
+  const h = harness((url) => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? second.response : null);
+  const { run } = await startRetry(h);
+  first.emit({ type: 'chunk', run_id: 'run-1', sequence: 1, event_id: 'a', content: 'Hello' }); await tick(); first.fail(); await tick();
+  assertComposerBusy(h, true); assert.equal(h.el('new').disabled, true); assert.deepEqual(h.delays, [1000]);
+  await h.el('form').events.submit({ preventDefault() {} }); onlyOneSubmission(h);
+  h.timers[0](); await tick();
+  assert.ok(h.calls.some(c => c.url.endsWith('/runs/run-1/events/stream?after=1') && c.init.method === 'GET'));
+  second.emit({ type: 'chunk', sequence: 1, event_id: 'a', content: 'Hello' });
+  second.emit({ type: 'chunk', sequence: 2, content: ' world' }); await tick();
+  const copyButtons = h.el('messages').querySelectorAll('button').filter(b => b.dataset.copyLabel === '复制消息');
+  await copyButtons[1].events.click(); assert.equal(h.copied.at(-1), 'Hello world');
+  second.emit({ type: 'done', sequence: 3 }); await run;
+  assert.equal(h.el('error').textContent, ''); assert.equal(h.el('status').textContent, '本轮已完成'); onlyOneSubmission(h); assertComposerBusy(h, false);
+});
+
+test('event run_id recovers without header and preserves tools and pending approval across replay', async () => {
+  const first = retryStream(null), second = retryStream(null);
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? second.response : null);
+  const { run } = await startRetry(h);
+  const tool = { type: 'tool.started', run_id: 'event-run', sequence: 1, tool_call_id: 'tool1', tool: 'shell', preview: 'echo hi' };
+  const approval = { type: 'approval.required', run_id: 'event-run', sequence: 2, conversation_id: 'conv1', request_id: 'approval1', tool: 'shell', preview: 'echo hi' };
+  first.emit(tool); first.emit(approval); await tick();
+  const pending = h.el('requests').textContent, details = h.el('messages').querySelectorAll('details').length;
+  first.fail(); await tick(); assert.equal(h.el('requests').textContent, pending);
+  h.timers[0](); await tick(); assert.ok(h.calls.some(c => c.url.endsWith('/runs/event-run/events/stream?after=2')));
+  second.emit(tool); second.emit(approval); second.emit({ type: 'progress', sequence: 3, tool_call_id: 'tool1', tool: 'shell', summary: 'hi' }); await tick();
+  assert.equal(h.el('requests').textContent, pending); assert.equal(h.el('messages').querySelectorAll('details').length, details);
+  assert.match(h.el('messages').textContent, /hi/);
+  second.emit({ type: 'done', sequence: 4 }); await run; assert.equal(h.el('requests').textContent, ''); onlyOneSubmission(h);
+});
+
+test('X-Run-ID permits recovery before any event and terminal event prevents retries', async () => {
+  const first = retryStream(), second = retryStream();
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? second.response : null);
+  const { run } = await startRetry(h); first.close(); await tick(); h.timers[0](); await tick();
+  assert.ok(h.calls.some(c => c.url.endsWith('/runs/run-1/events/stream?after=0')));
+  second.emit({ type: 'done', sequence: 1 }); await run;
+  assert.equal(h.delays.length, 1); onlyOneSubmission(h); assert.equal(second.cancelled, true);
+});
+
+test('retry delays are bounded and exhaustion never resubmits POST', async () => {
+  const first = retryStream();
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? Promise.reject(new TypeError('offline')) : null);
+  const { run } = await startRetry(h); first.fail(); await tick();
+  for (let i = 0; i < 5; i++) { assertComposerBusy(h, true); h.timers[i](); await tick(); }
+  await run; assert.deepEqual(h.delays, [1000, 2000, 4000, 8000, 10000]);
+  assert.match(h.el('error').textContent, /耗尽/); assert.equal(h.activeTimers.size, 0); onlyOneSubmission(h); assertComposerBusy(h, false);
+});
+
+test('pagehide cancels retry wait without leaving a timer or making a GET', async () => {
+  const first = retryStream(); const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h); first.fail(); await tick(); assert.equal(h.activeTimers.size, 1);
+  h.pagehide(); await run; assert.equal(h.activeTimers.size, 0); h.timers[0](); await tick();
+  assert.equal(h.calls.filter(c => c.url.includes('/events/stream?')).length, 0); onlyOneSubmission(h);
+});
+
+test('pagehide immediately cancels a blocked reader', async () => {
+  const first = retryStream(); const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h); h.pagehide(); await run;
+  assert.equal(first.cancelled, true); assert.equal(h.activeTimers.size, 0); onlyOneSubmission(h);
+});
+
+for (const status of [401, 403, 404, 400, 408, 429, 503]) test('HTTP recovery classification ' + status, async () => {
+  const first = retryStream();
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? { ok: false, status, json: async () => ({ error: 'unavailable' }) } : null);
+  const { run } = await startRetry(h); first.fail(); await tick(); h.timers[0](); await tick();
+  if ([408, 429, 503].includes(status)) { assert.equal(h.delays.length, 2); h.pagehide(); }
+  else { assert.equal(h.delays.length, 1); assert.match(h.el('error').textContent, new RegExp('HTTP ' + status)); }
+  await run; onlyOneSubmission(h);
+});
+
+for (const type of ['resync_required', 'bad-json', 'bad-content-type']) test('protocol failure stops safely: ' + type, async () => {
+  const first = retryStream();
+  if (type === 'bad-content-type') first.response.headers.get = () => 'text/html';
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h);
+  if (type === 'bad-json') first.emit({ type: 'chunk', sequence: 'invalid' });
+  else if (type !== 'bad-content-type') first.emit({ type });
+  await run; assert.equal(h.delays.length, 0); assert.notEqual(h.el('error').textContent, ''); onlyOneSubmission(h);
+});
+
+test('raw heartbeat bytes reset the silence deadline without application events', async () => {
+  const first = retryStream(); const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h);
+  for (let i = 0; i < 8; i++) {
+    await h.advance(15000); first.heartbeat(); await tick();
+    assert.equal(first.cancelled, false); assert.equal(h.activeTimers.size, 1);
+  }
+  await h.advance(44999); assert.equal(first.cancelled, false); assert.equal(h.delays.length, 0);
+  first.emit({ type: 'done', sequence: 1 }); await run;
+  assert.equal(h.activeTimers.size, 0); await h.advance(120000);
+  assert.equal(h.delays.length, 0); onlyOneSubmission(h);
+});
+
+test('45 seconds of silence cancels reader and resumes original run with GET cursor', async () => {
+  const first = retryStream(), second = retryStream();
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? second.response : null);
+  const { run } = await startRetry(h);
+  first.emit({ type: 'chunk', sequence: 7, content: 'partial' }); await tick();
+  await h.advance(44999); assert.equal(first.cancelled, false);
+  await h.advance(1); assert.equal(first.cancelled, true); assertComposerBusy(h, true);
+  assert.deepEqual(h.delays, [1000]); assert.equal(h.activeTimers.size, 1);
+  await h.advance(1000);
+  assert.ok(h.calls.some(c => c.url.endsWith('/runs/run-1/events/stream?after=7') && c.init.method === 'GET'));
+  second.emit({ type: 'done', sequence: 8 }); await run;
+  assert.equal(h.el('error').textContent, ''); assert.equal(h.activeTimers.size, 0);
+  await h.advance(120000); assert.equal(h.delays.length, 1); onlyOneSubmission(h);
+});
+
+test('silence without run ID stops safely without POST resubmission or timers', async () => {
+  const first = retryStream(null); const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h); await h.advance(45000); await run;
+  assert.equal(first.cancelled, true); assert.match(h.el('error').textContent, /45 秒/);
+  assert.match(h.el('error').textContent, /未获取运行 ID/);
+  assert.equal(h.activeTimers.size, 0); assert.equal(h.delays.length, 0); onlyOneSubmission(h);
+});
+
+test('pagehide clears active silence watchdog and cannot reconnect later', async () => {
+  const first = retryStream(); const h = harness(url => url.endsWith('/chat/stream') ? first.response : null);
+  const { run } = await startRetry(h); await h.advance(30000);
+  assert.equal(h.activeTimers.size, 1); h.pagehide(); await run;
+  assert.equal(first.cancelled, true); assert.equal(h.activeTimers.size, 0);
+  await h.advance(120000); assert.equal(h.delays.length, 0);
+  assert.equal(h.calls.filter(c => c.url.includes('/events/stream?')).length, 0); onlyOneSubmission(h);
+});
+
 test('server error event is not presented as completion', async () => {
   const h = harness(); await tick(); h.el('input').value = 'hello';
   const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
   h.emit({ type: 'error', message: 'run failed' }); await run;
   assert.equal(h.el('status').textContent, '运行失败'); assert.match(h.el('error').textContent, /run failed/);
+});
+
+const jsonResponse = data => ({ ok: true, json: async () => data });
+const sessionRows = h => h.el('list').children;
+test('history dots use real runs, prefer active and do not retain an older failure', async () => {
+  const states = [
+    [{ status: 'failed', created_at: '2025-01-01' }, { status: 'completed', created_at: '2025-02-01' }],
+    [{ status: 'completed', created_at: '2025-02-01' }, { status: 'pending', created_at: '2025-01-01' }],
+    [{ status: 'waiting_approval' }], [{ status: 'waiting_clarification' }], [{ status: 'failed' }], null, [{ status: 'future' }]
+  ];
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse(states.map((_, i) => ({ id: String(i) })));
+    const m = url.match(/conversations\/(\d+)\/runs/); if (m) return jsonResponse(states[Number(m[1])]);
+  }); await tick(); await tick();
+  assert.deepEqual(sessionRows(h).map(r => r.children[0].dataset.state), ['idle', 'running', 'waiting', 'waiting', 'failed', 'idle', 'unknown']);
+  assert.match(sessionRows(h)[6].children[0].title, /未知/);
+  assert.deepEqual(sessionRows(h).map(r => r.children[2].disabled), [false, true, true, true, false, false, true]);
+  h.pagehide(); assert.equal(h.activeTimers.size, 0);
+});
+
+for (const outcome of ['cancel', 'success', 'fail']) test('archive confirmation ' + outcome, async () => {
+  let prompts = 0, resolveDelete;
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved' });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+    if (url.endsWith('/delete')) return new Promise(resolve => { resolveDelete = resolve; });
+  }, text => { prompts++; assert.match(text, /移出历史列表/); assert.match(text, /相关消息仍保留/); return outcome !== 'cancel'; });
+  await tick(); const row = sessionRows(h)[0]; await row.children[1].events.click(); await tick();
+  assert.equal(h.el('status').textContent, '');
+  const action = row.children[2].events.click();
+  if (outcome === 'cancel') { await action; assert.equal(resolveDelete, undefined); }
+  else {
+    await row.children[2].events.click(); assert.equal(prompts, 1);
+    const call = h.calls.find(c => c.url.endsWith('/delete'));
+    assert.equal(call.init.body, '{}'); assert.equal(call.init.headers['X-CSRF-Token'], 'csrf-test');
+    resolveDelete(outcome === 'success' ? jsonResponse({ status: 'archived' }) : { ok: false, status: 409, json: async () => ({ error: 'active' }) }); await action;
+    if (outcome === 'success') { assert.equal(sessionRows(h).length, 0); assert.equal(h.el('title').textContent, '新会话'); }
+    else { assert.equal(sessionRows(h).length, 1); assert.equal(h.el('title').textContent, '历史会话'); assert.match(h.el('error').textContent, /409/); }
+  }
+  h.pagehide();
+});
+
+test('status query failure stays unknown and disables archive', async () => {
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'x' }]);
+    if (url.includes('/runs?')) return Promise.reject(new Error('offline'));
+  }); await tick();
+  const row = sessionRows(h)[0]; assert.equal(row.children[0].dataset.state, 'unknown'); assert.match(row.children[0].title, /未知.*offline/); assert.equal(row.children[2].disabled, true); h.pagehide();
+});
+
+test('status queries cap concurrency at four, discard old generations and pause/clean polling', async () => {
+  const jobs = []; let active = 0, maximum = 0;
+  const h = harness((url, init) => {
+    if (url.endsWith('/conversations')) return jsonResponse(Array.from({ length: 8 }, (_, i) => ({ id: String(i) })));
+    if (url.includes('/runs?')) return new Promise(resolve => {
+      active++; maximum = Math.max(maximum, active);
+      jobs.push({ signal: init.signal, finish(data) { active--; resolve(jsonResponse(data)); } });
+    });
+  }); await tick(); assert.equal(jobs.length, 4);
+  h.visibility(true); assert.ok(jobs.every(j => j.signal.aborted));
+  h.visibility(false);
+  jobs.splice(0).forEach(j => j.finish([{ status: 'failed' }])); await tick();
+  assert.equal(sessionRows(h)[0].children[0].dataset.state, 'unknown');
+  jobs.splice(0).forEach(j => j.finish([])); await tick();
+  jobs.splice(0).forEach(j => j.finish([])); await tick();
+  assert.equal(maximum, 4); assert.equal(h.activeTimers.size, 1);
+  const count = h.calls.length; h.visibility(true); await h.advance(60000); assert.equal(h.calls.length, count);
+  h.visibility(false); await tick(); jobs.splice(0).forEach(j => j.finish([])); await tick(); jobs.splice(0).forEach(j => j.finish([])); await tick();
+  await h.advance(30000); assert.equal(jobs.length, 4);
+  h.pagehide(); jobs.splice(0).forEach(j => j.finish([])); await tick(); assert.equal(h.activeTimers.size, 0);
+  const stopped = h.calls.length; await h.advance(60000); assert.equal(h.calls.length, stopped);
+});
+
+test('SSE state wins over an older in-flight status response', async () => {
+  let resolveRuns;
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'live' }]);
+    if (url.includes('/runs?')) return new Promise(resolve => { resolveRuns = resolve; });
+  }); await tick();
+  h.el('input').value = 'task'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+  h.emit({ type: 'conv_id', conversation_id: 'live' }); h.emit({ type: 'approval.required', request_id: 'approval' }); await tick();
+  assert.equal(sessionRows(h)[0].children[0].dataset.state, 'waiting');
+  resolveRuns(jsonResponse([{ status: 'completed' }])); await tick();
+  assert.equal(sessionRows(h)[0].children[0].dataset.state, 'waiting');
+  h.emit({ type: 'done' }); await run; h.pagehide();
 });

@@ -33,6 +33,67 @@ func agentCoreProxyServer(t *testing.T, upstream string) *Server {
 	return &Server{Cfg: cfg, Agent: agentcore.New(cfg)}
 }
 
+func TestAgentCoreDeleteConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name, runs                      string
+		checkStatus, deleteStatus, want int
+	}{
+		{"empty", `[]`, 200, 200, 200},
+		{"null", `null`, 200, 200, 200},
+		{"terminal", `[{"status":"completed"},{"status":"failed"},{"status":"cancelled"}]`, 200, 200, 200},
+		{"pending", `[{"status":"pending"}]`, 200, 200, 409},
+		{"running", `[{"status":"running"}]`, 200, 200, 409},
+		{"clarify", `[{"status":"waiting_clarification"}]`, 200, 200, 409},
+		{"approval", `[{"status":"waiting_approval"}]`, 200, 200, 409},
+		{"unknown", `[{"status":"new-state"}]`, 200, 200, 502},
+		{"nil run", `[null]`, 200, 200, 502},
+		{"malformed", `{}`, 200, 200, 502},
+		{"trailing", `[] {}`, 200, 200, 502},
+		{"unavailable", `[]`, 503, 200, 502},
+		{"redirect", `[]`, 307, 200, 502},
+		{"history cap", `[` + strings.Repeat(`{"status":"completed"},`, 499) + `{"status":"completed"}]`, 200, 200, 409},
+		{"delete conflict", `[]`, 200, 409, 409},
+		{"delete failure", `[]`, 200, 500, 500},
+		{"delete missing", `[]`, 200, 404, 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deleted := false
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer config-secret" || r.Header.Get("Cookie") != "" || r.Header.Get("X-CSRF-Token") != "" {
+					t.Errorf("unsafe upstream headers: %v", r.Header)
+				}
+				if r.Method == http.MethodGet && r.URL.RequestURI() == "/v1/conversations/abc/runs?limit=500" {
+					w.WriteHeader(tc.checkStatus)
+					fmt.Fprint(w, tc.runs)
+					return
+				}
+				deleted = true
+				body, _ := io.ReadAll(r.Body)
+				if r.Method != http.MethodDelete || r.URL.RequestURI() != "/v1/conversations/abc" || len(body) != 0 {
+					t.Errorf("unexpected delete: %s %s body=%q", r.Method, r.URL, body)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.deleteStatus)
+				fmt.Fprint(w, `{"status":"archived"}`)
+			}))
+			defer upstream.Close()
+			s := agentCoreProxyServer(t, upstream.URL)
+			r := httptest.NewRequest("POST", "/panel/agentcore/api/conversations/abc/delete?token=evil", strings.NewReader(`{"ignored":true}`))
+			r.Header.Set("Cookie", "browser-secret")
+			r.Header.Set("X-CSRF-Token", "browser-secret")
+			w := httptest.NewRecorder()
+			s.handleAgentCoreAPI(w, r)
+			wantDelete := tc.checkStatus == 200 && (tc.name == "empty" || tc.name == "null" || tc.name == "terminal" || strings.HasPrefix(tc.name, "delete "))
+			if w.Code != tc.want || deleted != wantDelete {
+				t.Fatalf("status=%d deleted=%v body=%s", w.Code, deleted, w.Body)
+			}
+			if deleted && w.Body.String() != `{"status":"archived"}` {
+				t.Fatalf("delete response changed: %s", w.Body)
+			}
+		})
+	}
+}
+
 func TestAgentCoreTarget(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "127.0.0.2", "::1", "localhost"} {
 		target, token, err := agentCoreTarget([]byte(fmt.Sprintf("server: {host: %q, port: 3030, auth_token: secret}", host)))
@@ -64,10 +125,20 @@ func TestAgentCoreProxyWhitelist(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/tools"}, {"DELETE", "/conversations/abc"},
 		{"PUT", "/conversations/abc"}, {"GET", "/chat"},
+		{"GET", "/conversations/abc/delete"}, {"DELETE", "/conversations/abc/delete"},
+		{"POST", "/conversations/abc/runs"}, {"POST", "/conversations/abc/delete/extra"},
+		{"POST", "/conversations/a%2Fb/delete"}, {"POST", "/conversations/../delete"},
 		{"GET", "/conversations/abc/logs/extra"}, {"POST", "/chat/abc/clarify/extra"},
 		{"GET", "/conversations/../tools"}, {"GET", "/conversations/a%2Fb"},
 		{"GET", "/conversations/%61"}, {"GET", "/conversations/."},
 		{"GET", "/conversations/"}, {"HEAD", "/conversations"},
+		{"POST", "/runs/run-1/events/stream"}, {"HEAD", "/runs/run-1/events/stream"},
+		{"GET", "/runs//events/stream"}, {"GET", "/runs/./events/stream"},
+		{"GET", "/runs/../events/stream"}, {"GET", "/runs/a.b/events/stream"},
+		{"GET", "/runs/a%2Fb/events/stream"}, {"GET", "/runs/%61/events/stream"},
+		{"GET", "/runs/运行/events/stream"}, {"GET", "/runs/" + strings.Repeat("a", 129) + "/events/stream"},
+		{"GET", "/runs/run-1/events"}, {"GET", "/runs/run-1/events/stream/extra"},
+		{"GET", "/runs/run-1/events/stream/"},
 	} {
 		w := httptest.NewRecorder()
 		s.handleAgentCoreAPI(w, httptest.NewRequest(tc.method, "/agentcore/api"+tc.path, nil))
@@ -82,6 +153,8 @@ func TestAgentCoreProxyForwarding(t *testing.T) {
 		{"GET", "/conversations?source=web&limit=10&offset=2&token=evil", "/v1/conversations?limit=10&offset=2&source=web"},
 		{"GET", "/conversations/abc-123?foo=bar", "/v1/conversations/abc-123"},
 		{"GET", "/conversations/abc-123/logs", "/v1/conversations/abc-123/logs"},
+		{"GET", "/conversations/abc-123/runs?limit=4&token=evil", "/v1/conversations/abc-123/runs?limit=4"},
+		{"GET", "/conversations/abc-123/runs?limit=501", "/v1/conversations/abc-123/runs"},
 		{"GET", "/approvals", "/v1/approvals"},
 		{"POST", "/approvals/request-123", "/v1/approvals/request-123"},
 		{"POST", "/chat/abc-123/clarify", "/v1/chat/abc-123/clarify"},
@@ -164,6 +237,107 @@ func TestAgentCoreProxyStreamAndCancellation(t *testing.T) {
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	if err != nil || line != "event: delta\n" {
 		t.Fatalf("stream did not flush: %q %v", line, err)
+	}
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("upstream not canceled")
+	}
+}
+
+func TestAgentCoreProxyResumeForwarding(t *testing.T) {
+	for _, tc := range []struct{ query, want string }{
+		{"", ""},
+		{"after=0", "?after=0"},
+		{"after=42", "?after=42"},
+		{"after=00042", "?after=42"},
+		{"after=18446744073709551615", "?after=18446744073709551615"},
+		{"after=18446744073709551616", ""},
+		{"after=-1", ""}, {"after=%2B1", ""},
+		{"after=1.5", ""}, {"after=abc", ""},
+		{"after=0x10", ""}, {"after=%201", ""}, {"after=", ""},
+		{"after=7&after=8", "?after=7"},
+		{"after=invalid&after=8", ""},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runs/run-1/events/stream"+tc.want {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+				}
+				if r.Header.Get("Authorization") != "Bearer config-secret" || r.Header.Get("Accept") != "text/event-stream" {
+					t.Errorf("wrong upstream headers: %v", r.Header)
+				}
+				for _, h := range []string{"Cookie", "Origin", "Forwarded", "X-Forwarded-For", "X-Other", "X-CSRF-Token"} {
+					if r.Header.Get(h) != "" {
+						t.Errorf("leaked %s", h)
+					}
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Set-Cookie", "upstream=secret")
+				fmt.Fprint(w, "id: 43\ndata: resumed\n\n")
+			}))
+			defer upstream.Close()
+			s := agentCoreProxyServer(t, upstream.URL)
+			r := httptest.NewRequest("GET", "/panel/agentcore/api/runs/run-1/events/stream?"+tc.query+"&token=query-secret&secret=query-secret&csrf=query-secret&source=web&limit=10&offset=2", nil)
+			for _, h := range []string{"Cookie", "Authorization", "Origin", "Forwarded", "X-Forwarded-For", "X-Other", "X-CSRF-Token", "Accept"} {
+				r.Header.Set(h, "browser-secret")
+			}
+			w := httptest.NewRecorder()
+			s.handleAgentCoreAPI(w, r)
+			if w.Code != http.StatusOK || w.Body.String() != "id: 43\ndata: resumed\n\n" {
+				t.Fatalf("response %d %s", w.Code, w.Body)
+			}
+			if w.Header().Get("Content-Type") != "text/event-stream" || w.Header().Get("X-Accel-Buffering") != "no" || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Set-Cookie") != "" {
+				t.Fatalf("unsafe or missing stream headers: %v", w.Header())
+			}
+		})
+	}
+}
+
+func TestAgentCoreProxyResumeStreamAndCancellation(t *testing.T) {
+	canceled := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runs/run-1/events/stream?after=42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+		}
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Error("missing SSE Accept header")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "id: 43\nevent: delta\ndata: resumed\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	defer upstream.Close()
+	s := agentCoreProxyServer(t, upstream.URL)
+	panel := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleAgentCoreAPI(&statusRecorder{ResponseWriter: w}, r)
+	}))
+	defer panel.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", panel.URL+"/panel/agentcore/api/runs/run-1/events/stream?after=42", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("X-Accel-Buffering") != "no" || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("unexpected stream response: %d %v", resp.StatusCode, resp.Header)
+	}
+	reader := bufio.NewReader(resp.Body)
+	for _, want := range []string{"id: 43\n", "event: delta\n", "data: resumed\n", "\n"} {
+		if line, err := reader.ReadString('\n'); err != nil || line != want {
+			t.Fatalf("stream did not flush: got %q, want %q: %v", line, want, err)
+		}
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("stream only flushed at deadline: %v", ctx.Err())
 	}
 	cancel()
 	select {

@@ -6,9 +6,10 @@
   var enabled = root.dataset.enabled === "true", current = "", busy = false, loading = false, ready = true;
   var generation = 0, listGeneration = 0, historyController, streamController, stopping = false, stopped = false;
   var input = el("input"), messages = el("messages"), list = el("list"), follow = true, options = {}, usageInfo = null;
-  var pending = new Map(), optionsReady = false, conversationMetadata = {}, preferencesKnown = true;
-    var selectedEffort = "", selectedMode = "build", confirmedMode = "";
-    var effortValues = ["", "low", "medium", "high"], modeValues = ["plan", "build", "edit", "guarded", "yolo"];
+  var sessions = new Map(), deleting = new Set(), liveStates = new Map(), statusQueue = [], statusActive = 0, statusEpoch = 0, statusTimer = null, statusController, pageStopped = false;
+    var pending = new Map(), optionsReady = false, conversationMetadata = {}, preferencesKnown = true;
+    var selectedMode = "build", confirmedMode = "";
+    var modeValues = ["plan", "build", "edit", "guarded", "yolo"];
     function fillSelect(id, values, selected, labels) {
       var select = el(id); select.replaceChildren();
       values = values.slice(); if (selected && values.indexOf(selected) < 0) values.push(selected);
@@ -16,12 +17,13 @@
       select.value = selected;
     }
     function renderPreferences() {
-      var effort = current ? (preferencesKnown ? conversationMetadata.effort || "" : "unknown") : selectedEffort;
+      var effort = current && !preferencesKnown ? "未知" : conversationMetadata.effort || options.reasoning_effort || "默认";
       var mode = current ? (preferencesKnown ? conversationMetadata.mode || "" : "unknown") : selectedMode;
-      fillSelect("effort", effortValues, effort, { "": "继承服务默认（" + (options.reasoning_effort || "由提供商决定") + "）", unknown: "会话设置读取失败" });
+
       fillSelect("mode", modeValues, mode, { "": "继承服务默认（" + (options.approval_mode || "未知") + "）", plan: "plan · 限制写入", build: "build · 按风险审批", edit: "edit · 允许工作区编辑", guarded: "guarded · 广泛允许，终端仍需审批", yolo: "yolo · 高危广泛允许", unknown: "会话设置读取失败" });
-      el("settings").textContent = "模型：" + (current && !preferencesKnown ? "未知" : conversationMetadata.model || options.model || "未知") + " · 服务配置";
-      el("preference-note").textContent = current ? "已有会话设置只读；修改请选择新建会话。思考强度是否支持由模型提供商决定。" : "首条消息携带 effort / mode 保存到新会话。默认 build；思考强度为提供商透传值，支持范围取决于模型。";
+      el("settings").textContent = "模型：" + (current && !preferencesKnown ? "未知" : conversationMetadata.model || options.model || "未知") + " · 思考强度：" + effort;
+      el("preference-note").textContent = "";
+            el("preference-note").title = current ? "已有会话权限模式只读；修改请选择新建会话。" : "权限模式仅对新会话生效，默认 build。";
       controls();
     }
     function confirmPermission(mode) {
@@ -29,7 +31,7 @@
       if (!window.confirm("确认使用 " + mode + " 权限模式？该模式会自动允许更多工具操作，可能修改或删除文件、执行命令或产生外部影响。仅对可信任务使用。")) return false;
       confirmedMode = mode; return true;
     }
-    el("effort").addEventListener("change", function () { if (!current && !busy) selectedEffort = el("effort").value; });
+
     el("mode").addEventListener("change", function () {
       if (current || busy) return;
       var value = el("mode").value;
@@ -41,22 +43,31 @@
   function status(text) { el("status").textContent = text; }
   function controls() {
     input.disabled = !enabled || busy || loading || !ready;
-        el("effort").disabled = el("mode").disabled = !enabled || !optionsReady || !!current || busy || loading;
+        el("mode").disabled = !enabled || !optionsReady || !!current || busy || loading;
     el("send").disabled = input.disabled || !input.value.trim();
+    el("send").classList.toggle("hidden", busy);
+    el("stop").classList.toggle("hidden", !busy);
     el("new").disabled = !enabled || busy; el("refresh").disabled = !enabled || busy;
     el("stop").disabled = !busy || !current || stopping || stopped;
     el("stop").title = !current && busy ? "等待流返回会话 ID" : "请求停止当前运行";
-    list.querySelectorAll("button").forEach(function (b) { b.disabled = busy; });
+    sessions.forEach(function (s, id) {
+          s.open.disabled = busy || deleting.has(id);
+          s.remove.disabled = busy || deleting.has(id) || ["unknown", "running", "waiting"].indexOf(s.state) >= 0;
+        });
     messages.setAttribute("aria-busy", String(busy || loading));
   }
   async function request(path, body, signal, stream) {
     var headers = { Accept: stream ? "text/event-stream" : "application/json", "X-CSRF-Token": root.dataset.csrf };
     var init = { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store", headers: headers, signal: signal };
     if (body !== undefined) { headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-    var response = await fetch(root.dataset.api + path, init);
+    var response;
+        try { response = await fetch(root.dataset.api + path, init); }
+        catch (err) { if (err.name !== "AbortError") err.retryable = true; throw err; }
     if (!response.ok) {
       var detail = ""; try { var data = await response.json(); detail = data.error || data.message || ""; } catch (_) { /* Do not render server HTML. */ }
-      throw new Error("HTTP " + response.status + (typeof detail === "string" && detail ? "：" + detail : ""));
+      var failure = new Error("HTTP " + response.status + (typeof detail === "string" && detail ? "：" + detail : ""));
+            failure.retryable = response.status >= 500 || response.status === 408 || response.status === 429;
+            throw failure;
     }
     if (stream) {
       if (!/text\/event-stream/i.test(response.headers.get("Content-Type") || "") || !response.body) throw new Error("服务未返回 SSE 流，请检查登录状态及代理配置");
@@ -110,23 +121,107 @@
     try {
       options = await request("/options"); if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error("配置格式错误");
       optionsReady = true;
-      el("settings").title = "查看服务默认配置；新会话可覆盖思考强度与权限模式。";
+      el("settings").title = "当前模型与思考强度；服务默认值可在配置页修改。";
       renderPreferences();
-    } catch (err) { optionsReady = false; options = {}; el("settings").textContent = "配置读取失败（" + err.message + "）· 前往配置"; controls(); }
+    } catch (err) { optionsReady = false; options = {}; el("settings").textContent = "配置读取失败（" + err.message + "）"; controls(); }
     updateUsage(usageInfo);
   }
+  function paintSession(s, state, label) {
+    s.state = state; s.dot.dataset.state = state;
+    s.dot.title = label; s.dot.setAttribute("aria-label", label); controls();
+  }
+  function runState(data) {
+    if (data === null) data = [];
+    if (!Array.isArray(data)) throw new Error("运行列表格式错误");
+    var runs = data.filter(function (r) { return r && typeof r.status === "string"; });
+    runs.sort(function (a, b) { return (Date.parse(b.created_at) || Date.parse(b.updated_at) || 0) - (Date.parse(a.created_at) || Date.parse(a.updated_at) || 0) || (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0); });
+    var active = runs.find(function (r) { return ["running", "pending", "waiting_approval", "waiting_clarification"].indexOf(r.status) >= 0; });
+    var latest = active || runs[0];
+    if (!latest) return data.length ? ["unknown", "运行状态未知"] : ["idle", "无运行"];
+    var value = latest.status;
+    if (["running", "pending"].indexOf(value) >= 0) return ["running", "运行中（" + value + "）"];
+    if (["waiting_approval", "waiting_clarification"].indexOf(value) >= 0) return ["waiting", value === "waiting_approval" ? "等待权限审批" : "等待澄清回答"];
+    if (value === "failed") return ["failed", "最新运行失败"];
+    if (["completed", "cancelled"].indexOf(value) >= 0) return ["idle", "最新运行：" + value];
+    return ["unknown", "运行状态未知（" + value + "）"];
+  }
+  function stopStatus() {
+    ++statusEpoch; statusQueue = []; window.clearTimeout(statusTimer); statusTimer = null;
+    if (statusController) statusController.abort();
+  }
+  function scheduleStatus() {
+    if (pageStopped || document.hidden || !sessions.size || statusQueue.length || statusActive || statusTimer !== null) return;
+    statusTimer = window.setTimeout(function () { statusTimer = null; pollStatus(); }, 30000);
+  }
+  function pumpStatus() {
+    while (statusActive < 4 && statusQueue.length) {
+      var job = statusQueue.shift(); statusActive++;
+      (async function (job) {
+        var s = sessions.get(job.id), revision = liveStates.get(job.id);
+        try {
+          var data = await request("/conversations/" + encodeURIComponent(job.id) + "/runs?limit=100", undefined, job.signal);
+          if (job.epoch !== statusEpoch || sessions.get(job.id) !== s || liveStates.get(job.id) !== revision || busy && current === job.id) return;
+          var result = runState(data); paintSession(s, result[0], result[1]);
+        } catch (err) {
+          if (job.epoch === statusEpoch && sessions.get(job.id) === s && liveStates.get(job.id) === revision && !(busy && current === job.id)) paintSession(s, "unknown", "运行状态未知：" + err.message);
+        } finally { statusActive--; pumpStatus(); scheduleStatus(); }
+      })(job);
+    }
+    scheduleStatus();
+  }
+  function pollStatus() {
+    stopStatus();
+    if (pageStopped || document.hidden) return;
+    statusController = new AbortController();
+    sessions.forEach(function (_, id) { statusQueue.push({ id: id, epoch: statusEpoch, signal: statusController.signal }); });
+    pumpStatus();
+  }
+  function liveStatus(state, label) {
+    if (!current) return;
+    var value = { state: state, label: label }; liveStates.set(current, value);
+    var s = sessions.get(current); if (s) paintSession(s, state, label);
+  }
+  async function deleteSession(id) {
+    var s = sessions.get(id);
+    if (!s || s.remove.disabled || deleting.has(id) || pageStopped) return;
+    if (!window.confirm("将此会话移出历史列表（归档）？相关消息仍保留，不会物理删除。")) return;
+    deleting.add(id); controls(); var selection = generation;
+    try {
+      var result = await request("/conversations/" + encodeURIComponent(id) + "/delete", {});
+      if (!result || result.status !== "archived") throw new Error("服务未确认归档");
+      if (pageStopped) return;
+      ++listGeneration; sessions.delete(id); liveStates.delete(id);
+      list.querySelectorAll(".agent-chat-session-row").forEach(function (row) { if (row.dataset.id === id) row.remove(); });
+      if (current === id && selection === generation && !busy) await openConversation("", "");
+      el("list-status").textContent = sessions.size ? "" : "暂无历史会话";
+    } catch (err) { if (!pageStopped) error("归档失败：" + err.message); }
+    finally { deleting.delete(id); controls(); }
+  }
   async function refreshList() {
-    if (!enabled) return; var token = ++listGeneration; el("list-status").textContent = "加载中…";
+    if (!enabled || pageStopped) return; var token = ++listGeneration; el("list-status").textContent = "加载中…";
     try {
       var data = await request("/conversations"); if (token !== listGeneration) return;
-      if (data === null) data = []; if (!Array.isArray(data)) throw new Error("会话列表格式错误"); list.replaceChildren();
+      if (data === null) data = []; if (!Array.isArray(data)) throw new Error("会话列表格式错误"); stopStatus(); sessions.clear(); list.replaceChildren();
       data.forEach(function (c) {
         if (!c || typeof c.id !== "string" || !c.id) return;
-        var b = node("button", c.title || "未命名会话", "agent-chat-session"); b.type = "button"; b.dataset.id = c.id;
+        var row = node("div", "", "agent-chat-session-row"); row.dataset.id = c.id;
+                var dot = node("span", "", "agent-chat-session-dot"); row.appendChild(dot);
+                var b = node("button", c.title || "未命名会话", "agent-chat-session agent-chat-session-open"); b.type = "button"; b.dataset.id = c.id;
         b.title = (c.title || "未命名会话") + " · " + c.id; b.setAttribute("aria-pressed", String(current === c.id));
-        b.addEventListener("click", function () { openConversation(c.id, c.title); }); list.appendChild(b);
+        b.addEventListener("click", function () { openConversation(c.id, c.title); }); row.appendChild(b);
+                var remove = node("button", "", "agent-chat-session-delete btn"); remove.type = "button";
+                remove.title = "删除会话（归档）"; remove.setAttribute("aria-label", remove.title);
+                var template = el("delete-icon");
+                if (template && template.content) remove.appendChild(template.content.cloneNode(true));
+                else {
+                  var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("width", "16"); svg.setAttribute("height", "16"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", "2");
+                  var path = document.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", "M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"); svg.appendChild(path); remove.appendChild(svg);
+                }
+                remove.addEventListener("click", function () { return deleteSession(c.id); }); row.appendChild(remove); list.appendChild(row);
+                var s = { open: b, remove: remove, dot: dot }; sessions.set(c.id, s);
+                var live = liveStates.get(c.id); paintSession(s, live ? live.state : "unknown", live ? live.label : "运行状态未知，正在查询");
       });
-      el("list-status").textContent = data.length ? "" : "暂无历史会话"; controls();
+      el("list-status").textContent = sessions.size ? "" : "暂无历史会话"; controls(); pollStatus();
     } catch (err) { if (token === listGeneration) el("list-status").textContent = "加载失败：" + err.message + "；点击刷新重试"; }
   }
   function clearPending() { pending.clear(); el("requests").replaceChildren(); }
@@ -171,14 +266,14 @@
     } catch (err) { if (token === generation) error("待审批请求读取失败：" + err.message); }
   }
   async function openConversation(id, title) {
-    if (busy || !enabled) return; var token = ++generation;
+    if (busy || !enabled || deleting.has(id)) return; var token = ++generation;
     if (historyController) historyController.abort(); historyController = new AbortController();
     current = id; loading = !!id; ready = !id; follow = true; input.value = ""; error(""); clearPending();
         conversationMetadata = {}; preferencesKnown = !id; confirmedMode = "";
-        if (!id) { selectedEffort = ""; selectedMode = "build"; confirmedMode = ""; }
+        if (!id) { selectedMode = "build"; confirmedMode = ""; }
         renderPreferences(); updateUsage(null);
     el("title").textContent = title || (id ? "历史会话" : "新会话");
-    list.querySelectorAll("button").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.id === id)); });
+    list.querySelectorAll(".agent-chat-session-open").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.id === id)); });
     empty(id ? "正在读取消息…" : "开始一个新会话，消息由 AgentCore 保存。"); status(id ? "正在读取历史…" : "准备就绪"); controls();
     if (!id) { input.focus(); return; }
     try {
@@ -197,7 +292,7 @@
       renderPreferences();
       if (!Array.isArray(data)) throw new Error("历史格式错误");
       empty("此会话暂无消息。"); data.forEach(function (entry) { if (entry) { addMessage(entry); if (entry.role === "assistant") updateUsage({ prompt_tokens: entry.prompt_tokens, completion_tokens: entry.completion_tokens, context_tokens: entry.context_tokens }); } });
-      ready = true; scroll(true); status("已加载最近 " + data.length + " 条日志，可能不包含更早消息；历史视图不会自动订阅仍在运行的任务。");
+      ready = true; scroll(true); status("");
       recoverApprovals(token, id);
     } catch (err) { if (token === generation && err.name !== "AbortError") { error("历史加载失败：" + err.message); status("请重新选择会话重试"); } }
     finally { if (token === generation) { loading = false; controls(); } }
@@ -210,7 +305,7 @@
     event.preventDefault(); var message = input.value.trim(); if (!enabled || busy || loading || !ready || !message) return;
     var effectiveMode = current ? (preferencesKnown ? conversationMetadata.mode || options.approval_mode || "" : "") : selectedMode;
         if (!confirmPermission(effectiveMode)) return;
-        var token = ++generation; busy = true; stopping = false; stopped = false; clearPending(); input.value = ""; error(""); updateUsage(null);
+        var token = ++generation; busy = true; liveStatus("running", "正在提交运行"); stopping = false; stopped = false; clearPending(); input.value = ""; error(""); updateUsage(null);
     addMessage({ role: "user", content: message }); var assistant = addMessage({ role: "assistant" }), reply = "", terminal = false, tools = new Map(), seen = new Set();
     streamController = new AbortController(); status("正在连接流…"); controls();
     try {
@@ -218,17 +313,30 @@
             if (current) body.conversation_id = current;
             else {
               body.metadata = { mode: selectedMode };
-              if (selectedEffort) body.metadata.effort = selectedEffort;
+
             }
-      var response = await request("/chat/stream", body, streamController.signal, true);
-      var parser = core.sse(function (e, name) {
+      var runID = "", cursor = 0, attempts = 0, signal = streamController.signal;
+      function rememberRun(value) {
+        // Some older clients/mocks return Content-Type for every header name.
+        if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) return;
+        if (runID && value !== runID) throw new Error("流协议错误：运行 ID 不一致");
+        runID = value;
+      }
+      function receive(e, name) {
         if (token !== generation || !e || terminal) return;
-        if (e.event_id) { if (seen.has(e.event_id)) return; seen.add(e.event_id); }
+        rememberRun(e.run_id);
+                if (e.sequence !== undefined && (!Number.isSafeInteger(e.sequence) || e.sequence < 1)) throw new Error("流协议错误：无效事件序号");
+                if (e.sequence !== undefined && e.sequence <= cursor || e.event_id && seen.has(e.event_id)) return;
+                error("");
         if (e.conversation_id) {
                   if (!current) { conversationMetadata = Object.assign({}, body.metadata || {}); preferencesKnown = true; }
                   current = e.conversation_id; renderPreferences();
                 }
         var type = e.type || name;
+                if (type === "approval.required" || type === "clarify") liveStatus("waiting", type === "clarify" ? "等待澄清回答" : "等待权限审批");
+                else if (type === "done" || type === "cancelled") liveStatus("idle", type === "done" ? "最新运行已完成" : "最新运行已停止");
+                else if (type === "error") liveStatus("failed", "最新运行失败");
+                else if (["conv_id", "resumed", "thinking", "chunk", "tool_call", "tool.started", "progress"].indexOf(type) >= 0) liveStatus("running", "运行中");
         if (e.usage) updateUsage(e.usage);
         switch (type) {
           case "conv_id": case "resumed": status("运行中"); break;
@@ -248,11 +356,80 @@
           default: detail(assistant.article, "运行事件：" + type, e.message || e.summary || e.content || "");
         }
         scroll(false);
-      });
-      var reader = response.body.getReader(), decoder = new TextDecoder();
-      try { while (true) { var part = await reader.read(); if (part.done) break; parser(decoder.decode(part.value, { stream: true }), false); if (terminal) { await reader.cancel(); break; } } parser(decoder.decode(), true); }
-      finally { try { await reader.cancel(); } catch (_) { /* The connection may already have failed. */ } reader.releaseLock(); }
-      if (!terminal) throw new Error("流在终态事件之前断开，运行可能仍在后台继续");
+        if (e.event_id) seen.add(e.event_id);
+        if (e.sequence !== undefined) cursor = e.sequence;
+      }
+      function cancelled() { var err = new Error("流订阅已取消"); err.name = "AbortError"; return err; }
+      function wait(delay) {
+        return new Promise(function (resolve, reject) {
+          if (signal.aborted) { reject(cancelled()); return; }
+          var timer = window.setTimeout(function () { signal.removeEventListener("abort", abort); resolve(); }, delay);
+          function abort() { window.clearTimeout(timer); signal.removeEventListener("abort", abort); reject(cancelled()); }
+          signal.addEventListener("abort", abort, { once: true });
+        });
+      }
+      function readWithTimeout(reader) {
+        return new Promise(function (resolve, reject) {
+          var settled = false;
+          function finish(err, part) {
+            if (settled) return;
+            settled = true; window.clearTimeout(timer); signal.removeEventListener("abort", abort);
+            if (err) reject(err); else resolve(part);
+          }
+          function abort() { finish(cancelled()); reader.cancel().catch(function () {}); }
+          // The server sends a heartbeat every 15 seconds. Count raw bytes,
+          // including SSE comments, rather than parsed application events.
+          var timer = window.setTimeout(function () {
+            var err = new Error("流连续 45 秒未收到数据或心跳"); err.retryable = true;
+            finish(err); reader.cancel().catch(function () {});
+          }, 45000);
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) { abort(); return; }
+          function read() {
+            reader.read().then(function (part) {
+              if (settled) return;
+              if (!part.done && !part.value.byteLength) { read(); return; }
+              finish(null, part);
+            }, function (err) { err.retryable = true; finish(err); });
+          }
+          read();
+        });
+      }
+      while (!terminal) {
+        try {
+          if (signal.aborted) throw cancelled();
+          var response = await request(attempts ? "/runs/" + encodeURIComponent(runID) + "/events/stream?after=" + cursor : "/chat/stream", attempts ? undefined : body, signal, true);
+          rememberRun(response.headers.get("X-Run-ID"));
+          if (attempts) { error(""); status("连接已恢复，继续接收原运行…"); }
+          var parser = core.sse(receive), reader = response.body.getReader(), decoder = new TextDecoder();
+
+          try {
+            while (!terminal) {
+              if (signal.aborted) throw cancelled();
+              var part;
+              part = await readWithTimeout(reader);
+              if (signal.aborted) throw cancelled();
+              if (part.done) break;
+              parser(decoder.decode(part.value, { stream: true }), false);
+            }
+            if (!terminal) parser(decoder.decode(), true);
+          } finally {
+
+            try { await reader.cancel(); } catch (_) { /* The connection may already have failed. */ }
+            reader.releaseLock();
+          }
+          if (!terminal) { var eof = new Error("流在终态事件之前断开，运行可能仍在后台继续"); eof.retryable = true; throw eof; }
+        } catch (failure) {
+          if (signal.aborted) throw cancelled();
+          if (terminal || !failure.retryable) throw failure;
+          if (!runID) throw new Error(failure.message + "；未获取运行 ID，无法安全恢复，绝不会重新提交");
+          if (attempts >= 5) throw new Error("自动恢复已耗尽（5 次）：" + failure.message);
+          var delay = Math.min(Math.pow(2, attempts), 10); attempts++;
+          error("连接中断，正在恢复原运行；请勿重复提交。");
+          status("将在 " + delay + " 秒后重连（" + attempts + "/5）…");
+          await wait(delay * 1000);
+        }
+      }
     } catch (err) {
       if (token === generation && err.name !== "AbortError") { error(err.message + "；不要直接重发，请刷新历史确认。关闭流连接不等于停止后台运行。"); status("连接中断 / 状态未确认"); }
     } finally { if (token === generation) { busy = false; streamController = null; controls(); refreshList(); input.focus(); } }
@@ -265,7 +442,8 @@
     } catch (err) { if (token === generation) error("停止失败：" + err.message); }
     finally { if (token === generation) { stopping = false; controls(); } }
   });
-  window.addEventListener("pagehide", function () { ++generation; if (historyController) historyController.abort(); if (streamController) streamController.abort(); });
+  document.addEventListener("visibilitychange", function () { if (document.hidden) stopStatus(); else if (!pageStopped) pollStatus(); });
+    window.addEventListener("pagehide", function () { pageStopped = true; stopStatus(); ++listGeneration; ++generation; if (historyController) historyController.abort(); if (streamController) streamController.abort(); });
   empty(enabled ? "开始一个新会话，消息由 AgentCore 保存。" : "启动 AgentCore 后刷新页面即可开始会话。");
   renderPreferences(); updateUsage(null); controls(); if (enabled) { refreshList(); loadOptions(); }
 })();

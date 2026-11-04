@@ -99,6 +99,8 @@ func agentCoreTarget(data []byte) (*url.URL, string, error) {
 func agentCoreRoute(method, path string) (string, bool) {
 	parts := strings.Split(path, "/")
 	switch {
+	case method == http.MethodGet && len(parts) == 5 && parts[1] == "runs" && agentCoreID.MatchString(parts[2]) && parts[3] == "events" && parts[4] == "stream":
+		return "/v1/runs/" + parts[2] + "/events/stream", true
 	case method == http.MethodGet && path == "/approvals":
 		return "/v1/approvals", true
 	case method == http.MethodPost && len(parts) == 3 && parts[1] == "approvals" && agentCoreID.MatchString(parts[2]):
@@ -107,14 +109,69 @@ func agentCoreRoute(method, path string) (string, bool) {
 		return "/v1/conversations", true
 	case method == http.MethodGet && len(parts) == 3 && parts[1] == "conversations" && agentCoreID.MatchString(parts[2]):
 		return "/v1/conversations/" + parts[2], true
-	case method == http.MethodGet && len(parts) == 4 && parts[1] == "conversations" && agentCoreID.MatchString(parts[2]) && parts[3] == "logs":
-		return "/v1/conversations/" + parts[2] + "/logs", true
+	case method == http.MethodGet && len(parts) == 4 && parts[1] == "conversations" && agentCoreID.MatchString(parts[2]) && (parts[3] == "logs" || parts[3] == "runs"):
+		return "/v1/conversations/" + parts[2] + "/" + parts[3], true
+	case method == http.MethodPost && len(parts) == 4 && parts[1] == "conversations" && agentCoreID.MatchString(parts[2]) && parts[3] == "delete":
+		return "/v1/conversations/" + parts[2], true
 	case method == http.MethodPost && (path == "/chat" || path == "/chat/stream"):
 		return "/v1" + path, true
 	case method == http.MethodPost && len(parts) == 4 && parts[1] == "chat" && agentCoreID.MatchString(parts[2]) && (parts[3] == "stop" || parts[3] == "clarify"):
 		return "/v1/chat/" + parts[2] + "/" + parts[3], true
 	}
 	return "", false
+}
+
+// The upstream archive endpoint has no active-run guard. This preflight is
+// conservative, but cannot atomically exclude a concurrently started run.
+func agentCoreDeletionReady(w http.ResponseWriter, r *http.Request, target *url.URL, token, path string) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	u := *target
+	u.Path = path + "/runs"
+	u.RawQuery = "limit=500"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		http.Error(w, "Cannot verify AgentCore run state", http.StatusBadGateway)
+		return false
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := agentCoreTransport.RoundTrip(req)
+	if err != nil {
+		http.Error(w, "Cannot verify AgentCore run state", http.StatusBadGateway)
+		return false
+	}
+	defer resp.Body.Close()
+	var runs []*struct {
+		Status string `json:"status"`
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (8<<20)+1))
+	if resp.StatusCode != http.StatusOK || err != nil || len(body) > 8<<20 || json.Unmarshal(body, &runs) != nil {
+		http.Error(w, "Cannot verify AgentCore run state", http.StatusBadGateway)
+		return false
+	}
+	for _, run := range runs {
+		if run == nil {
+			http.Error(w, "Cannot verify AgentCore run state", http.StatusBadGateway)
+			return false
+		}
+		switch run.Status {
+		case "completed", "failed", "cancelled":
+		case "pending", "running", "waiting_clarification", "waiting_approval":
+			http.Error(w, "Conversation has active runs", http.StatusConflict)
+			return false
+		default:
+			http.Error(w, "Cannot verify AgentCore run state", http.StatusBadGateway)
+			return false
+		}
+	}
+	// ConversationRuns has a hard limit of 500 and no pagination.
+	if len(runs) >= 500 {
+		http.Error(w, "Cannot safely archive conversation: run history limit reached", http.StatusConflict)
+		return false
+	}
+	return true
 }
 
 // handleAgentCoreAPI must be registered behind the panel's protect middleware
@@ -148,8 +205,9 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Bound both synchronous calls and streams, while preserving browser cancellation.
+	streaming := strings.HasSuffix(path, "/stream")
 	timeout := 10 * time.Minute
-	if path == "/v1/chat/stream" {
+	if streaming {
 		timeout = time.Hour
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
@@ -172,6 +230,10 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 	}
+	deleting := r.Method == http.MethodPost && strings.HasPrefix(path, "/v1/conversations/")
+	if deleting && !agentCoreDeletionReady(w, r, target, token, path) {
+		return
+	}
 	proxy := &httputil.ReverseProxy{
 		Transport:     agentCoreTransport,
 		FlushInterval: -1,
@@ -179,11 +241,30 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 			pr.SetURL(target)
 			pr.Out.URL.Path = path
 			pr.Out.URL.RawPath = ""
+			// Rewrite only the upstream copy, after protect validated the browser POST.
+			if deleting {
+				pr.Out.Method = http.MethodDelete
+				pr.Out.Body = nil
+				pr.Out.ContentLength = 0
+				pr.Out.TransferEncoding = nil
+			}
 			query := url.Values{}
 			if path == "/v1/conversations" {
 				for _, key := range []string{"source", "limit", "offset"} {
 					if values, exists := pr.In.URL.Query()[key]; exists {
 						query[key] = values
+					}
+				}
+			}
+			if pr.In.Method == http.MethodGet && strings.HasPrefix(path, "/v1/conversations/") && strings.HasSuffix(path, "/runs") {
+				if limit, err := strconv.Atoi(pr.In.URL.Query().Get("limit")); err == nil && limit > 0 && limit <= 500 {
+					query.Set("limit", strconv.Itoa(limit))
+				}
+			}
+			if streaming && pr.In.Method == http.MethodGet {
+				if after := pr.In.URL.Query().Get("after"); after != "" {
+					if cursor, err := strconv.ParseUint(after, 10, 64); err == nil {
+						query.Set("after", strconv.FormatUint(cursor, 10))
 					}
 				}
 			}
@@ -195,7 +276,7 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 			if token != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+token)
 			}
-			if path == "/v1/chat/stream" {
+			if streaming {
 				pr.Out.Header.Set("Accept", "text/event-stream")
 			}
 		},
@@ -209,7 +290,7 @@ func (s *Server) handleAgentCoreAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			headers.Set("Cache-Control", "no-store")
 			headers.Set("X-Content-Type-Options", "nosniff")
-			if path == "/v1/chat/stream" {
+			if streaming {
 				headers.Set("X-Accel-Buffering", "no")
 			}
 			resp.Header = headers
