@@ -116,17 +116,51 @@
         copyMessage.setAttribute("aria-label", "复制完整消息");
         copyMessage.addEventListener("click", function () {
           var text = rawContent;
-          if (entry.tool_calls && entry.tool_calls.length) text += "\n\n工具调用：\n" + JSON.stringify(entry.tool_calls, null, 2);
-          if (entry.actions && entry.actions.length) text += "\n\n工具执行记录：\n" + JSON.stringify(entry.actions, null, 2);
+
           return copy(text, copyMessage);
         });
-        var body = node("div", "", "agent-chat-message-body"); article.appendChild(body); wrap.appendChild(article); wrap.appendChild(copyMessage); messages.appendChild(wrap);
-    function update(text) { rawContent = text; body.replaceChildren(core.markdown(document, text, copy)); scroll(false); }
+    var process = node("div", "", "agent-chat-process"), body = null, phases = [], answer = "", reasoning = null, iteration = 0, tools = new Map();
+    if (entry.role !== "user") article.appendChild(process);
+    wrap.appendChild(article); wrap.appendChild(copyMessage); messages.appendChild(wrap);
+    function update(text) {
+      answer = text; rawContent = phases.concat(answer ? [answer] : []).join("\n\n");
+      if (!body && text) { body = node("div", "", "agent-chat-message-body agent-chat-answer"); article.appendChild(body); }
+      if (body) body.replaceChildren(core.markdown(document, text, copy));
+      scroll(false);
+    }
+    function phase() {
+      if (!answer || !body) return;
+      phases.push(answer); body.remove(); body.className = "agent-chat-message-body agent-chat-phase"; process.appendChild(body); body = null; update("");
+    }
+    function finishThinking(state) {
+      if (!reasoning) return;
+      reasoning.details.open = false; reasoning.details.dataset.state = state || "complete";
+      reasoning.details.querySelector("summary").textContent = "思考 · 第 " + iteration + " 轮 · " + (state === "failed" ? "失败" : state === "cancelled" ? "已停止" : "已完成");
+      reasoning = null;
+    }
+    function think(round) {
+      if (reasoning && (!round || round === iteration)) return;
+      phase(); finishThinking(); iteration = round || iteration + 1;
+      reasoning = detail(process, "思考 · 第 " + iteration + " 轮 · 进行中", "");
+      reasoning.details.classList.toggle("agent-chat-reasoning", true); reasoning.details.dataset.state = "pending"; reasoning.details.open = true;
+    }
+    function tool(e, result) {
+      phase(); finishThinking();
+      var item = e.tool_call_id && tools.get(e.tool_call_id);
+      if (!item) {
+        item = detail(process, "", ""); item.details.classList.toggle("agent-chat-tool", true); item.name = e.tool || "工具"; item.preview = e.preview || "";
+        if (e.tool_call_id) tools.set(e.tool_call_id, item);
+      }
+      var state = result ? (e.error_code || ["error", "failed", "fail"].indexOf(e.status) >= 0 ? "failed" : ["success", "completed", "ok"].indexOf(e.status) >= 0 ? "success" : "returned") : "pending";
+      item.details.dataset.state = state;
+      item.details.querySelector("summary").textContent = (state === "pending" ? "执行工具：" : state === "failed" ? "工具失败：" : state === "success" ? "工具成功：" : "工具已返回：") + item.name;
+      item.text.textContent = item.preview + (result ? (item.preview ? "\n\n结果：\n" : "") + (e.summary || e.content || "") : "");
+    }
     update(entry.content || "");
-    if (entry.tool_calls && entry.tool_calls.length) detail(article, "工具调用", JSON.stringify(entry.tool_calls, null, 2));
-    if (entry.actions && entry.actions.length) detail(article, "工具执行记录", JSON.stringify(entry.actions, null, 2));
-    if (entry.status) detail(article, "消息状态", entry.status);
-    return { article: article, update: update };
+    return { article: article, process: process, update: update, phase: phase, think: think, finishThinking: finishThinking, tool: tool,
+      reasoning: function (e) { think(e.iteration); reasoning.text.textContent += typeof e.content === "string" ? e.content : ""; },
+      note: function (title, text) { phase(); finishThinking(); detail(process, title, text); }
+    };
   }
   function detail(parent, title, content) {
     var details = node("details", "", "agent-chat-detail"); details.appendChild(node("summary", title));
@@ -312,7 +346,27 @@
       else { preferencesKnown = true; conversationMetadata = conversation.metadata || {}; }
       renderPreferences();
       if (!Array.isArray(data)) throw new Error("历史格式错误");
-      empty("此会话暂无消息。"); data.forEach(function (entry) { if (entry) { addMessage(entry); if (entry.role === "assistant") updateUsage({ prompt_tokens: entry.prompt_tokens, completion_tokens: entry.completion_tokens, context_tokens: entry.context_tokens }); } });
+      empty("此会话暂无消息。");
+            var turn = null, turnRun = "";
+            data.forEach(function (entry) {
+              if (!entry) return;
+              if (entry.role === "user") { addMessage(entry); turn = null; turnRun = ""; return; }
+              if (!turn || entry.run_id && turnRun && entry.run_id !== turnRun) { turn = addMessage({ role: "assistant" }); turnRun = entry.run_id || ""; }
+              if (entry.role === "tool") {
+                turn.tool({ tool_call_id: entry.tool_call_id, content: entry.content, status: entry.status }, true); return;
+              }
+              if (entry.role !== "assistant") return;
+                      turn.phase();
+              if (entry.tool_calls && entry.tool_calls.length) turn.update(entry.content || "");
+              (entry.tool_calls || []).forEach(function (call) {
+                turn.tool({ tool_call_id: call.id, tool: call.function && call.function.name, preview: call.function && call.function.arguments }, false);
+              });
+              (entry.actions || []).forEach(function (action) {
+                turn.tool({ tool_call_id: action.tool_call_id, tool: action.tool, summary: action.result, status: action.status }, true);
+              });
+              if (!entry.tool_calls || !entry.tool_calls.length) turn.update(entry.content || "");
+              updateUsage({ prompt_tokens: entry.prompt_tokens, completion_tokens: entry.completion_tokens, context_tokens: entry.context_tokens });
+            });
       ready = true; scroll(true); status("");
       recoverApprovals(token, id);
     } catch (err) { if (token === generation && err.name !== "AbortError") { error("历史加载失败：" + err.message); status("请重新选择会话重试"); } }
@@ -327,7 +381,7 @@
     var effectiveMode = current ? (preferencesKnown ? conversationMetadata.mode || options.approval_mode || "" : "") : selectedMode;
         if (!confirmPermission(effectiveMode)) return;
         var token = ++generation; busy = true; liveStatus("running", "正在提交运行"); stopping = false; stopped = false; clearPending(); input.value = ""; error(""); updateUsage(null);
-    addMessage({ role: "user", content: message }); var assistant = addMessage({ role: "assistant" }), reply = "", terminal = false, tools = new Map(), seen = new Set();
+    addMessage({ role: "user", content: message }); var assistant = addMessage({ role: "assistant" }), reply = "", terminal = false, seen = new Set();
     streamController = new AbortController(); status("正在连接流…"); controls();
     try {
       var body = { message: message, source: "web" };
@@ -357,24 +411,25 @@
                 if (type === "approval.required" || type === "clarify") liveStatus("waiting", type === "clarify" ? "等待澄清回答" : "等待权限审批");
                 else if (type === "done" || type === "cancelled") liveStatus("idle", type === "done" ? "最新运行已完成" : "最新运行已停止");
                 else if (type === "error") liveStatus("failed", "最新运行失败");
-                else if (["conv_id", "resumed", "thinking", "chunk", "tool_call", "tool.started", "progress"].indexOf(type) >= 0) liveStatus("running", "运行中");
+                else if (["conv_id", "resumed", "thinking", "reasoning", "chunk", "tool_call", "tool.started", "progress"].indexOf(type) >= 0) liveStatus("running", "运行中");
         if (e.usage) updateUsage(e.usage);
         switch (type) {
           case "conv_id": case "resumed": status("运行中"); break;
-          case "thinking": status("思考中 · 第 " + (e.iteration || "?") + " 轮"); detail(assistant.article, "思考 · 第 " + (e.iteration || "?") + " 轮", e.content || "服务未公开思考正文，仅报告思考状态。"); break;
+          case "thinking": assistant.think(e.iteration); reply = ""; break;
+                    case "reasoning": assistant.reasoning(e); break;
           case "chunk": reply += e.content || ""; assistant.update(reply); status("正在生成…"); break;
-          case "tool_call": status("调用工具：" + (e.tools || []).join("、")); break;
-          case "tool.started": tools.set(e.tool_call_id, detail(assistant.article, "执行工具：" + (e.tool || "工具"), e.preview)); status("工具执行中：" + (e.tool || "")); break;
-          case "progress": var item = tools.get(e.tool_call_id); if (item) { item.text.textContent += "\n\n结果：\n" + (e.summary || ""); item.details.querySelector("summary").textContent = "工具已返回：" + (e.tool || "工具"); } else detail(assistant.article, "工具结果：" + (e.tool || "工具"), e.summary); status("工具已返回，继续运行…"); break;
+          case "tool_call": assistant.phase(); assistant.finishThinking(); reply = ""; break;
+          case "tool.started": assistant.tool(e, false); reply = ""; break;
+          case "progress": assistant.tool(e, true); reply = ""; break;
           case "approval.required": status("等待权限审批"); ask(e, false); break;
           case "clarify": status("等待澄清回答"); ask(e, true); break;
-          case "warning": detail(assistant.article, "运行警告", e.message || e.content); break;
-          case "command.result": detail(assistant.article, "命令结果", e.content); break;
-          case "done": terminal = true; if (typeof e.reply === "string") reply = e.reply; assistant.update(reply || "（无文本回复）"); status("本轮已完成"); clearPending(); break;
-          case "cancelled": terminal = true; status("运行已停止"); clearPending(); break;
-          case "error": terminal = true; error(e.message || e.error_code || "运行失败"); status("运行失败"); clearPending(); break;
+          case "warning": assistant.note("运行警告", e.message || e.content); reply = ""; break;
+          case "command.result": assistant.note("命令结果", e.content); reply = ""; break;
+          case "done": terminal = true; assistant.finishThinking(); if (typeof e.reply === "string") reply = e.reply; assistant.update(reply || "（无文本回复）"); status("本轮已完成"); clearPending(); break;
+          case "cancelled": terminal = true; assistant.finishThinking("cancelled"); status("运行已停止"); clearPending(); break;
+          case "error": terminal = true; assistant.finishThinking("failed"); error(e.message || e.error_code || "运行失败"); status("运行失败"); clearPending(); break;
           case "resync_required": throw new Error("事件需要重新同步，请刷新历史确认结果");
-          default: detail(assistant.article, "运行事件：" + type, e.message || e.summary || e.content || "");
+          default: break;
         }
         scroll(false);
         if (e.event_id) seen.add(e.event_id);

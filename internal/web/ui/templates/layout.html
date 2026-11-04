@@ -33,7 +33,7 @@
     <button type="submit">{{icon "log-out"}}<span>退出</span></button>
   </form>
 </aside>
-<main>
+<main{{if eq .Title "AgentCore"}} class="agentcore-page"{{end}}>
 {{if .Flash}}<div class="{{if flashError .Flash}}error{{else}}flash{{end}}" role="status">{{.Flash}}</div>{{end}}
 {{template "content" .}}
 </main>

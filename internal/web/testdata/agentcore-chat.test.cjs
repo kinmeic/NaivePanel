@@ -375,6 +375,51 @@ test('history high-risk changes require confirmation and active runs disable cha
   const count = h.calls.length; h.el('mode').value = 'build'; await h.el('mode').events.change();
   assert.equal(h.calls.length, count); assert.equal(h.el('mode').value, 'yolo');
 });
+test('reasoning aggregates per iteration, phase text survives tools and done only replaces final answer', async () => {
+  const h = harness(); await tick(); h.el('input').value = 'question';
+  const run = h.el('form').events.submit({ preventDefault() {} }); await tick();
+  for (const e of [
+    { type: 'thinking', iteration: 1, content: 'NOT_REASONING' },
+    { type: 'reasoning', content: '分析' }, { type: 'reasoning', content: '计划', provider_state: 'SECRET' },
+    { type: 'chunk', content: '先检查文件' },
+    { type: 'tool.started', tool_call_id: 't', tool: 'read', preview: 'file' },
+    { type: 'progress', tool_call_id: 't', tool: 'read', summary: 'found' },
+    { type: 'thinking', iteration: 2 }, { type: 'reasoning', content: '完成检查' },
+    { type: 'chunk', content: '**最终**' }, { type: 'done', reply: '**最终**' }
+  ]) h.emit(e);
+  await run;
+  const wrap = h.el('messages').querySelectorAll('.agent-chat-message-wrap')[1], article = wrap.children[0];
+  assert.equal(article.children[0].className, 'agent-chat-process');
+  assert.ok(article.children[1].classList.contains('agent-chat-answer'));
+  const reasoning = article.querySelectorAll('.agent-chat-reasoning');
+  assert.equal(reasoning.length, 2); assert.equal(reasoning[0].querySelector('pre').textContent, '分析计划');
+  assert.ok(reasoning.every(n => n.open === false && n.dataset.state === 'complete'));
+  assert.equal(article.querySelector('.agent-chat-phase').textContent, '先检查文件');
+  assert.equal(article.querySelector('.agent-chat-tool').dataset.state, 'returned');
+  assert.doesNotMatch(article.textContent, /SECRET|NOT_REASONING|服务未公开/);
+  await wrap.children[1].events.click(); assert.equal(h.copied[0], '先检查文件\n\n**最终**');
+});
+
+test('history retains log order, tool results and phase content without fabricating reasoning', async () => {
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata: {} });
+    if (url.endsWith('/logs')) return jsonResponse([
+      { role: 'user', content: 'question' },
+      { role: 'assistant', run_id: 'r', content: '阶段', tool_calls: [{ id: 't', function: { name: 'read', arguments: 'file' } }], provider_state: 'SECRET' },
+      { role: 'tool', run_id: 'r', tool_call_id: 't', content: '失败结果', status: 'error' },
+      { role: 'assistant', run_id: 'r', content: '最终' }
+    ]);
+  });
+  await tick(); h.el('list').querySelector('.agent-chat-session-open').events.click(); await tick();
+  const article = h.el('messages').querySelectorAll('article')[1];
+  assert.equal(article.querySelectorAll('.agent-chat-reasoning').length, 0);
+  assert.equal(article.querySelector('.agent-chat-phase').textContent, '阶段');
+  assert.equal(article.querySelector('.agent-chat-tool').dataset.state, 'failed');
+  assert.match(article.textContent, /阶段.*read.*失败结果.*最终/s);
+  assert.doesNotMatch(article.textContent, /SECRET/);
+});
+
 test('message bubbles have no sender or timestamp and copy icons stay below the article', async () => {
   const h = harness(url => {
     if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
@@ -400,7 +445,7 @@ test('message bubbles have no sender or timestamp and copy icons stay below the 
     await button.events.click(); assert.equal(button.title, '已复制'); assert.equal(button.querySelector('svg'), svg);
   }
   assert.equal(wraps[1].children[0].querySelectorAll('details').length, 1);
-  assert.equal(h.copied[0], 'question'); assert.match(h.copied[1], /answer\n\n工具执行记录/);
+  assert.equal(h.copied[0], 'question'); assert.equal(h.copied[1], 'answer');
   h.timers.forEach(fn => fn());
   assert.ok(wraps.every(w => w.children[1].title === '复制消息' && w.children[1].querySelector('svg')));
 });
@@ -460,6 +505,23 @@ function retryStream(runID = 'run-1') {
 }
 function onlyOneSubmission(h) { assert.equal(h.calls.filter(c => c.init.method === 'POST' && c.url.endsWith('/chat/stream')).length, 1); }
 async function startRetry(h) { await tick(); h.el('input').value = 'hello'; const run = h.el('form').events.submit({ preventDefault() {} }); await tick(); return { run }; }
+
+test('reasoning replay uses the existing cursor and does not duplicate deltas or tool rows', async () => {
+  const first = retryStream('reason-run'), second = retryStream('reason-run');
+  const h = harness(url => url.endsWith('/chat/stream') ? first.response : url.includes('/events/stream?') ? second.response : undefined);
+  const { run } = await startRetry(h);
+  first.emit({ type: 'thinking', sequence: 1, iteration: 1 });
+  first.emit({ type: 'reasoning', sequence: 2, content: '分析' }); await tick();
+  first.fail(); await tick(); h.timers.shift()(); await tick();
+  second.emit({ type: 'reasoning', sequence: 2, content: '分析' });
+  second.emit({ type: 'reasoning', sequence: 3, content: '继续' });
+  second.emit({ type: 'tool.started', sequence: 4, tool_call_id: 't', tool: 'read' });
+  second.emit({ type: 'tool.started', sequence: 4, tool_call_id: 't', tool: 'read' });
+  second.emit({ type: 'done', sequence: 5, reply: 'answer' }); await run;
+  assert.equal(h.el('messages').querySelector('.agent-chat-reasoning').querySelector('pre').textContent, '分析继续');
+  assert.equal(h.el('messages').querySelectorAll('.agent-chat-tool').length, 1);
+  assert.ok(h.calls.some(c => c.url.endsWith('/events/stream?after=2')));
+});
 
 test('network recovery uses GET after successful sequence, deduplicates text and keeps composer busy', async () => {
   const first = retryStream(), second = retryStream();
