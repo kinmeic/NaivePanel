@@ -442,3 +442,10 @@ body.auth { display: flex; min-height: 100vh; align-items: center; justify-conte
 }
 
 .terminal-frame { width: 100%; height: 72vh; border: 1px solid var(--border); border-radius: 10px; background: #000; margin-top: 16px; }
+
+/* AgentCore's managed Skill forms live below the structured configuration form. */
+.agent-skill-card { margin: 12px 0; }
+.agent-skill-card summary { cursor: pointer; overflow-wrap: anywhere; }
+.agent-skill-card form { margin-top: 14px; }
+#agent-override-rows input.mono { width: 100%; min-width: 360px; }
+#agent-mcp-rows .config-row-actions .btn + .btn { margin-left: 6px; }

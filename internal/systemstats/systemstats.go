@@ -3,6 +3,7 @@ package systemstats
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -81,12 +82,22 @@ type counters struct {
 
 // Sampler retains the previous counter sample so it can calculate rates.
 type Sampler struct {
-	mu       sync.Mutex
-	procRoot string
-	sysRoot  string
-	diskPath string
-	now      func() time.Time
-	previous *counters
+	mu          sync.Mutex
+	procRoot    string
+	sysRoot     string
+	diskPath    string
+	now         func() time.Time
+	previous    *counters
+	monthlyPath string
+	monthly     monthlyNetwork
+}
+
+type monthlyNetwork struct {
+	Month  string `json:"month"`
+	Rx     uint64 `json:"rx"`
+	Tx     uint64 `json:"tx"`
+	LastRx uint64 `json:"last_rx"`
+	LastTx uint64 `json:"last_tx"`
 }
 
 // New creates the production sampler.
@@ -97,6 +108,49 @@ func New() *Sampler {
 		diskPath: "/",
 		now:      time.Now,
 	}
+}
+
+// SetMonthlyState loads the current month's persisted network counter. Call
+// before the sampler is shared with request handlers or the background loop.
+func (s *Sampler) SetMonthlyState(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.monthlyPath = path
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &s.monthly)
+	}
+}
+
+func (s *Sampler) updateMonthly(now time.Time, rx, tx uint64) (uint64, uint64, error) {
+	month := now.Local().Format("2006-01")
+	if s.monthly.Month != month {
+		// The first observation in a new calendar month is its baseline.
+		s.monthly = monthlyNetwork{Month: month, LastRx: rx, LastTx: tx}
+	} else {
+		if rx >= s.monthly.LastRx {
+			s.monthly.Rx += rx - s.monthly.LastRx
+		}
+		if tx >= s.monthly.LastTx {
+			s.monthly.Tx += tx - s.monthly.LastTx
+		}
+		s.monthly.LastRx, s.monthly.LastTx = rx, tx
+	}
+	if s.monthlyPath == "" {
+		return s.monthly.Rx, s.monthly.Tx, nil
+	}
+	data, err := json.Marshal(s.monthly)
+	if err != nil {
+		return s.monthly.Rx, s.monthly.Tx, err
+	}
+	tmp := s.monthlyPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return s.monthly.Rx, s.monthly.Tx, err
+	}
+	if err := os.Rename(tmp, s.monthlyPath); err != nil {
+		_ = os.Remove(tmp)
+		return s.monthly.Rx, s.monthly.Tx, err
+	}
+	return s.monthly.Rx, s.monthly.Tx, nil
 }
 
 // Sample reads current host counters. Individual sources fail independently
@@ -207,7 +261,10 @@ func (s *Sampler) Sample() Stats {
 			current.networkOK = true
 			current.networkRx, current.networkTx = rx, tx
 			result.NetworkAvailable = true
-			result.NetworkRxTotal, result.NetworkTxTotal = rx, tx
+			result.NetworkRxTotal, result.NetworkTxTotal, err = s.updateMonthly(now, rx, tx)
+			if err != nil {
+				result.Warnings = append(result.Warnings, "月流量保存失败: "+err.Error())
+			}
 			if s.previous != nil && s.previous.networkOK {
 				seconds := now.Sub(s.previous.at).Seconds()
 				if seconds > 0 {

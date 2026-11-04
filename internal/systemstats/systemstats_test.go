@@ -95,3 +95,61 @@ func TestSamplerRates(t *testing.T) {
 		t.Fatalf("network rates rx=%v tx=%v", second.NetworkRxBPS, second.NetworkTxBPS)
 	}
 }
+
+func TestMonthlyNetworkTotalsResetAndPersist(t *testing.T) {
+	root := t.TempDir()
+	proc := filepath.Join(root, "proc")
+	if err := os.MkdirAll(filepath.Join(proc, "net"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "monthly.json")
+	now := time.Date(2026, time.October, 31, 23, 59, 0, 0, time.Local)
+	writeNet := func(rx, tx string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(proc, "net", "dev"), []byte("eth0: "+rx+" 0 0 0 0 0 0 0 "+tx+" 0 0 0 0 0 0 0\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sampler := &Sampler{procRoot: proc, sysRoot: root, diskPath: root, now: func() time.Time { return now }}
+	sampler.SetMonthlyState(state)
+	writeNet("1000", "2000")
+	first := sampler.Sample()
+	if first.NetworkRxTotal != 0 || first.NetworkTxTotal != 0 {
+		t.Fatalf("initial totals: %+v", first)
+	}
+	now = now.Add(30 * time.Second)
+	writeNet("1300", "2400")
+	within := sampler.Sample()
+	if within.NetworkRxTotal != 300 || within.NetworkTxTotal != 400 {
+		t.Fatalf("within month: %+v", within)
+	}
+	now = now.Add(time.Minute)
+	writeNet("1600", "2800")
+	next := sampler.Sample()
+	if next.NetworkRxTotal != 0 || next.NetworkTxTotal != 0 {
+		t.Fatalf("new month: %+v", next)
+	}
+	now = now.Add(30 * time.Second)
+	writeNet("1800", "3100")
+	after := sampler.Sample()
+	if after.NetworkRxTotal != 200 || after.NetworkTxTotal != 300 {
+		t.Fatalf("after rollover: %+v", after)
+	}
+	restarted := &Sampler{procRoot: proc, sysRoot: root, diskPath: root, now: func() time.Time { return now }}
+	restarted.SetMonthlyState(state)
+	writeNet("1900", "3200")
+	persistent := restarted.Sample()
+	if persistent.NetworkRxTotal != 300 || persistent.NetworkTxTotal != 400 {
+		t.Fatalf("after restart: %+v", persistent)
+	}
+	writeNet("100", "200")
+	reboot := restarted.Sample()
+	if reboot.NetworkRxTotal != 300 || reboot.NetworkTxTotal != 400 {
+		t.Fatalf("counter reset: %+v", reboot)
+	}
+	writeNet("150", "260")
+	recovered := restarted.Sample()
+	if recovered.NetworkRxTotal != 350 || recovered.NetworkTxTotal != 460 {
+		t.Fatalf("after counter reset: %+v", recovered)
+	}
+}

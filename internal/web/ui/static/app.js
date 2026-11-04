@@ -474,7 +474,7 @@
       if (stats.network_available) {
         setText("metric-net-rx", formatRate(stats.network_rx_bps));
         setText("metric-net-tx", formatRate(stats.network_tx_bps));
-        setText("metric-net-total", "累计接收 " + formatBytes(stats.network_rx_total) + " · 发送 " + formatBytes(stats.network_tx_total));
+        setText("metric-net-total", "本月累计接收 " + formatBytes(stats.network_rx_total) + " · 发送 " + formatBytes(stats.network_tx_total));
         setText("metric-network-note", firstSystemSample ? "首次采样完成，下一次开始计算实时带宽" : "不含 loopback 回环流量");
         if (!firstSystemSample) {
           trafficHistory.push({

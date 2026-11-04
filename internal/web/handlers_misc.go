@@ -18,6 +18,7 @@ import (
 // handleDashboard shows the host and service overview.
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	bcInstalled := s.Bypass.Installed()
+	acInstalled := s.Agent.Installed()
 	host := systemstats.ReadHostInfo()
 	pubV4, pubV6 := sysinfo.PublicIPs()
 	data := map[string]any{
@@ -29,6 +30,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"CaddyActive":   sysd.IsActive("caddy"),
 		"BypassInstall": bcInstalled,
 		"BypassActive":  bcInstalled && sysd.IsActive("bypasscore"),
+		"AgentInstall":  acInstalled,
+		"AgentActive":   acInstalled && sysd.IsActive("agent-core"),
 		"PanelActive":   sysd.IsActive("naivepanel"),
 	}
 	s.render(w, r, "dashboard", "概览", data)

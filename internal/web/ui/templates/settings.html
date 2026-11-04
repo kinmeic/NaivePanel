@@ -21,7 +21,23 @@
       <input type="hidden" name="action" value="toggle">
       <label class="check"><input type="checkbox" name="auto_update" {{if .Data.AutoUpdate}}checked{{end}} onchange="this.form.submit()"> 每天自动检查并安装新版本</label>
     </form>
-    <p class="muted">面板与 BypassCore 更新包均会校验 SHA256SUMS，并在安装前自检；面板替换后会自动重启。GitHub 访问受限时，可在下方“更新设置”中配置通用镜像源。</p>
+    <p class="muted">面板、BypassCore 与 AgentCore 更新包均会校验 SHA256SUMS，并在安装前自检；面板替换后会自动重启。GitHub 访问受限时，可在下方“更新设置”中配置通用镜像源。</p>
+  </div>
+
+  <div class="card">
+    <h3>{{icon "cpu"}}AgentCore 信息</h3>
+    {{if .Data.Agent.Installed}}
+      <p>版本：{{if .Data.Agent.Version}}<code>{{.Data.Agent.Version}}</code>{{else}}<span class="muted">未知</span>{{end}}</p>
+      <div class="actions">
+        <form method="post" action="{{.Base}}/agentcore/update/check"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button type="submit" class="btn">{{icon "refresh-cw"}}检查更新</button></form>
+        <form method="post" action="{{.Base}}/agentcore/install" data-confirm="将下载并校验最新 AgentCore release，安装后自动重启服务，确定？"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button type="submit" class="primary">{{icon "download"}}立即更新</button></form>
+      </div>
+    {{else}}
+      <p><span class="warn">未安装</span></p>
+      <form method="post" action="{{.Base}}/agentcore/install" data-confirm="将从 GitHub 下载最新 AgentCore release 并安装，继续？"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button type="submit" class="primary">{{icon "download"}}安装 AgentCore</button></form>
+    {{end}}
+    <p>程序：<code class="path-code">{{.Data.Agent.BinPath}}</code></p>
+    <p>配置：<code class="path-code">{{.Data.Agent.ConfigPath}}</code></p>
   </div>
 
   <div class="card">
@@ -68,7 +84,7 @@
       </label>
       <button type="submit" class="btn">{{icon "save"}}保存设置</button>
     </form>
-    <p class="muted">此通用镜像设置用于 NaivePanel、BypassCore 和 Geo 数据的 GitHub 下载。</p>
+    <p class="muted">此通用镜像设置用于 NaivePanel、BypassCore、AgentCore 和 Geo 数据的 GitHub 下载。</p>
   </div>
 </div>
 {{end}}

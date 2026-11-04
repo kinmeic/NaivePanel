@@ -68,7 +68,7 @@
           <span><i class="traffic-rx-dot"></i>接收</span>
           <span><i class="traffic-tx-dot"></i>发送</span>
         </div>
-        <span id="metric-net-total" class="muted">累计：—</span>
+        <span id="metric-net-total" class="muted">本月累计：—</span>
       </div>
       <p id="metric-network-note" class="muted metric-note">等待首次采样</p>
     </section>
@@ -121,6 +121,12 @@
           <span>BypassCore</span>
           {{if .Data.BypassInstall}}
             {{if .Data.BypassActive}}<strong class="ok">运行中</strong>{{else}}<strong class="warn">已安装未运行</strong>{{end}}
+          {{else}}<strong class="muted">未安装</strong>{{end}}
+        </div>
+        <div>
+          <span>AgentCore</span>
+          {{if .Data.AgentInstall}}
+            {{if .Data.AgentActive}}<strong class="ok">运行中</strong>{{else}}<strong class="warn">已安装未运行</strong>{{end}}
           {{else}}<strong class="muted">未安装</strong>{{end}}
         </div>
       </div>

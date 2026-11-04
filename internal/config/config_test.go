@@ -33,6 +33,7 @@ func validConfig(t *testing.T) *Config {
 			ControlSock: filepath.Join(root, "control.sock"),
 			WorkDir:     root,
 		},
+		AgentCore: AgentCore{BinPath: DefaultAgentBin, ConfigPath: DefaultAgentConf, WorkDir: DefaultAgentWork},
 		Geo:       Geo{Dir: root},
 		BackupDir: filepath.Join(root, "backups"),
 	}
@@ -51,6 +52,7 @@ func TestValidateSecurityBoundaries(t *testing.T) {
 		{"base path injection", func(c *Config) { c.BasePath = "/manage\nrespond ok" }},
 		{"weak proxy token", func(c *Config) { c.ProxyToken = "short" }},
 		{"relative config path", func(c *Config) { c.BypassCore.ConfigPath = "config.json" }},
+		{"relative agent config path", func(c *Config) { c.AgentCore.ConfigPath = "agent-core.yaml" }},
 		{"insecure mirror", func(c *Config) { c.Geo.Mirror = "http://mirror.example.com" }},
 	}
 	for _, tc := range cases {

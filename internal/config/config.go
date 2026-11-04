@@ -35,6 +35,9 @@ const (
 	DefaultBypassConf   = "/etc/bypasscore/config.json"
 	DefaultBypassSock   = "/run/bypasscore/control.sock"
 	DefaultBypassWork   = "/etc/bypasscore"
+	DefaultAgentBin     = "/usr/local/bin/agent-core"
+	DefaultAgentConf    = "/etc/agent-core/agent-core.yaml"
+	DefaultAgentWork    = "/var/lib/agent-core"
 	DefaultTTYDBin      = "/usr/local/bin/ttyd"
 	DefaultTTYDPort     = 7681
 	DefaultSessionTTLH  = 12
@@ -49,6 +52,12 @@ type BypassCore struct {
 	ConfigPath  string `yaml:"config_path"`
 	ControlSock string `yaml:"control_sock"`
 	WorkDir     string `yaml:"work_dir"`
+}
+
+type AgentCore struct {
+	BinPath    string `yaml:"bin_path"`
+	ConfigPath string `yaml:"config_path"`
+	WorkDir    string `yaml:"work_dir"`
 }
 
 // Terminal holds the ttyd web-terminal settings. ttyd listens on localhost
@@ -97,6 +106,7 @@ type Config struct {
 
 	Caddy      CaddyPaths   `yaml:"caddy"`
 	BypassCore BypassCore   `yaml:"bypasscore"`
+	AgentCore  AgentCore    `yaml:"agentcore"`
 	Terminal   Terminal     `yaml:"terminal"`
 	Geo        Geo          `yaml:"geo"`
 	BackupDir  string       `yaml:"backup_dir"`
@@ -156,6 +166,15 @@ func (c *Config) SetDefaults() {
 	}
 	if c.BypassCore.WorkDir == "" {
 		c.BypassCore.WorkDir = DefaultBypassWork
+	}
+	if c.AgentCore.BinPath == "" {
+		c.AgentCore.BinPath = DefaultAgentBin
+	}
+	if c.AgentCore.ConfigPath == "" {
+		c.AgentCore.ConfigPath = DefaultAgentConf
+	}
+	if c.AgentCore.WorkDir == "" {
+		c.AgentCore.WorkDir = DefaultAgentWork
 	}
 	if c.Terminal.BinPath == "" {
 		c.Terminal.BinPath = DefaultTTYDBin
@@ -221,6 +240,9 @@ func (c *Config) Validate() error {
 		"bypasscore.config_path":  c.BypassCore.ConfigPath,
 		"bypasscore.control_sock": c.BypassCore.ControlSock,
 		"bypasscore.work_dir":     c.BypassCore.WorkDir,
+		"agentcore.bin_path":      c.AgentCore.BinPath,
+		"agentcore.config_path":   c.AgentCore.ConfigPath,
+		"agentcore.work_dir":      c.AgentCore.WorkDir,
 		"geo.dir":                 c.Geo.Dir,
 		"backup_dir":              c.BackupDir,
 	} {
@@ -597,6 +619,7 @@ func (c *Config) EnsureDirs() error {
 		c.BackupDir,
 		c.Caddy.SitesDir,
 		c.BypassCore.WorkDir,
+		c.AgentCore.WorkDir,
 		c.Geo.Dir,
 	} {
 		if err := os.MkdirAll(d, 0700); err != nil {

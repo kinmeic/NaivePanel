@@ -68,6 +68,16 @@ func main() {
 	if cfg.SelfUpdateEnabled() {
 		go selfAutoUpdate(cfg)
 	}
+	// Sample even when nobody has the dashboard open, so monthly totals
+	// survive panel restarts and preserve traffic between page visits.
+	go func() {
+		srv.Stats.Sample()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			srv.Stats.Sample()
+		}
+	}()
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

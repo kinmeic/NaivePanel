@@ -1,0 +1,70 @@
+{{define "content"}}
+<div class="editor-title"><a class="btn icon-btn" href="{{.Base}}/agentcore" title="返回 AgentCore" aria-label="返回 AgentCore">{{icon "arrow-left"}}</a><div><h1>AgentCore 配置编辑</h1><p class="muted">结构化编辑基础设置、Skill 与 MCP 服务；保存前由 AgentCore 校验，运行中的服务会重启。</p></div></div>
+{{if .Data.Error}}<div class="error" role="alert">{{.Data.Error}}</div>{{end}}
+{{if .Data.Installed}}
+<textarea id="agent-config-json" class="hidden" aria-hidden="true">{{.Data.ConfigJSON}}</textarea>
+<div id="agent-editor-error" class="error hidden" role="alert"></div>
+<div class="config-tabs" role="tablist" aria-label="AgentCore 配置区域">
+ <button type="button" class="config-tab active" data-agent-tab="base">基础设置</button>
+ <button type="button" class="config-tab" data-agent-tab="skills">SKILL</button>
+ <button type="button" class="config-tab" data-agent-tab="mcp">MCP 服务</button>
+ <button type="button" class="config-tab" data-agent-tab="raw">Raw YAML</button>
+</div>
+<form method="post" action="{{.Base}}/agentcore/config" id="agent-structured-form">
+ <input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="mode" value="structured"><input type="hidden" name="structured" id="agent-structured-value">
+ <section class="config-panel" data-agent-panel="base">
+  <div class="config-section-head"><div><h2>基础设置</h2><p class="muted">模型密钥可使用环境变量引用；服务默认只监听本机。</p></div></div>
+  <div class="config-field-grid">
+   <label>监听地址<input id="agent-host" placeholder="127.0.0.1"></label>
+   <label>监听端口<input id="agent-port" type="number" min="1" max="65535"></label>
+   <label>模型接口<select id="agent-api-format"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></label>
+   <label>模型 ID<input id="agent-model" placeholder="模型名称"></label>
+   <label>模型 Base URL<input id="agent-base-url" placeholder="https://api.openai.com/v1"></label>
+   <label>模型 API Key<input id="agent-api-key" type="password" autocomplete="off" placeholder="填写服务商 API Key"></label>
+   <label>工作区路径<input id="agent-workspace"></label>
+   <label>存储目录<input id="agent-storage-dir"></label>
+   <label>数据库路径<input id="agent-db-path"></label>
+   <label>权限模式<select id="agent-permission"><option value="plan">plan</option><option value="build">build</option><option value="edit">edit</option><option value="guarded">guarded</option><option value="yolo">yolo</option></select></label>
+  </div>
+  <label class="check"><input type="checkbox" id="agent-terminal">启用终端工具</label>
+  <p class="muted">AgentCore 以独立系统用户运行。更改监听地址时须遵守 AgentCore 的认证与终端安全校验。</p>
+  <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存</button></div>
+ </section>
+ <section class="config-panel hidden" data-agent-panel="skills">
+  <h2>Skill 设置</h2>
+  <label class="check"><input type="checkbox" id="agent-feature-skill">启用 Skill 功能</label>
+  <label class="check"><input type="checkbox" id="agent-skills-enabled">加载 Skill</label>
+  <label class="check"><input type="checkbox" id="agent-skills-instructions">自动注入 Skill 元数据</label>
+  <label>额外 Skill 搜索目录（每行一个绝对路径）<textarea id="agent-skill-roots" rows="4" class="mono wide"></textarea></label>
+  <p class="muted">单项开关使用 SKILL.md 的绝对路径。下方托管 Skill 的新增、编辑和删除为文件操作；文件变更后请重启服务。</p>
+  <div class="config-section-head"><h2>单项启用状态</h2><button type="button" class="btn" id="agent-override-add">{{icon "plus"}}添加路径</button></div>
+  <div class="table-scroll"><table class="config-array-table"><thead><tr><th>SKILL.md 绝对路径</th><th>启用</th><th>操作</th></tr></thead><tbody id="agent-override-rows"></tbody></table></div>
+  <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存</button></div>
+ </section>
+ <section class="config-panel hidden" data-agent-panel="mcp">
+  <label class="check"><input type="checkbox" id="agent-feature-mcp">启用 MCP 功能</label>
+  <div class="config-section-head"><div><h2>MCP 服务</h2><p class="muted">支持 stdio、Streamable HTTP 和 SSE；修改后需要重启 AgentCore。</p></div><button type="button" class="btn" id="agent-mcp-add">{{icon "plus"}}添加服务</button></div>
+  <div class="table-scroll"><table class="config-array-table"><thead><tr><th>名称</th><th>类型</th><th>命令 / URL</th><th>启用</th><th>操作</th></tr></thead><tbody id="agent-mcp-rows"></tbody></table></div>
+  <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存</button></div>
+ </section>
+</form>
+<section class="config-panel hidden" data-agent-panel="raw">
+ <p class="muted">直接编辑完整 YAML。Raw YAML 与结构化表单分别保存；切换标签不会覆盖未保存的内容。</p>
+ <form method="post" action="{{.Base}}/agentcore/config"><input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="mode" value="raw"><textarea name="config" rows="32" class="mono wide" spellcheck="false">{{.Data.Config}}</textarea><div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存 YAML</button></div></form>
+</section>
+<dialog id="agent-mcp-dialog" class="config-dialog"><form method="dialog"><div class="dialog-head"><h2 id="agent-mcp-dialog-title">编辑 MCP 服务</h2><button type="button" class="icon-btn" id="agent-mcp-close" aria-label="关闭">{{icon "x"}}</button></div><div id="agent-mcp-error" class="error hidden"></div>
+ <div class="config-field-grid"><label>名称<input id="agent-mcp-name" required></label><label>类型<select id="agent-mcp-type"><option value="stdio">stdio</option><option value="http">http</option><option value="sse">sse</option></select></label><label>命令（stdio）<input id="agent-mcp-command"></label><label>URL（http / sse）<input id="agent-mcp-url"></label><label>工作目录<input id="agent-mcp-cwd"></label><label>超时毫秒<input id="agent-mcp-timeout" type="number" min="0"></label></div>
+ <label>命令参数（每行一个）<textarea id="agent-mcp-args" rows="3" class="mono wide"></textarea></label>
+ <label>环境变量（JSON 对象）<textarea id="agent-mcp-env" rows="3" class="mono wide">{}</textarea></label>
+ <label>HTTP 请求头（JSON 对象）<textarea id="agent-mcp-headers" rows="3" class="mono wide">{}</textarea></label>
+ <label class="check"><input type="checkbox" id="agent-mcp-enabled">启用此服务</label><label class="check"><input type="checkbox" id="agent-mcp-always">始终加载工具</label>
+ <div class="actions dialog-actions"><button type="button" class="primary" id="agent-mcp-save">{{icon "save"}}保存到配置</button><button type="button" class="btn" id="agent-mcp-cancel">取消</button></div></form></dialog>
+<div class="config-panel hidden" data-agent-panel="skills-files">
+<h2>托管 Skill 文件</h2>
+<p class="muted">保存在 AgentCore 工作目录的 <code>skills</code> 子目录。文件内容需包含 YAML frontmatter；托管目录会作为搜索根目录。</p>
+<div class="card"><h3>{{icon "plus"}}新增 Skill</h3><form method="post" action="{{.Base}}/agentcore/skill"><input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="action" value="save"><label>名称<input name="name" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" required placeholder="my-skill"></label><label>SKILL.md 内容<textarea name="content" rows="9" class="mono wide" required placeholder="---&#10;name: my-skill&#10;description: 描述&#10;---&#10;&#10;指令内容"></textarea></label><button type="submit" class="btn">{{icon "plus"}}添加 Skill</button></form></div>
+{{range .Data.Skills}}<div class="card agent-skill-card"><details><summary><strong>{{.Name}}</strong> · <code>{{.Path}}</code> {{if .Enabled}}<span class="ok">已启用</span>{{else}}<span class="warn">已禁用</span>{{end}}</summary><form method="post" action="{{$.Base}}/agentcore/skill"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="save"><input type="hidden" name="name" value="{{.Name}}"><label>SKILL.md<textarea name="content" rows="14" class="mono wide">{{.Content}}</textarea></label><button type="submit" class="btn">{{icon "save"}}保存文件</button></form><form method="post" action="{{$.Base}}/agentcore/skill"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="toggle"><input type="hidden" name="name" value="{{.Name}}">{{if .Enabled}}<input type="hidden" name="enabled" value="false"><button type="submit" class="btn">禁用 Skill</button>{{else}}<input type="hidden" name="enabled" value="true"><button type="submit" class="btn">启用 Skill</button>{{end}}</form><form method="post" action="{{$.Base}}/agentcore/skill" data-confirm="确定删除 Skill {{.Name}}？"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="action" value="delete"><input type="hidden" name="name" value="{{.Name}}"><button type="submit" class="btn danger">{{icon "trash-2"}}删除</button></form></details></div>{{end}}
+</div>
+<script src="{{.Base}}/static/agentcore-config.js"></script>
+{{end}}
+{{end}}

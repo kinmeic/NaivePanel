@@ -195,7 +195,7 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 		`/manage-test/bypasscore/update/check`, "检查更新", "立即更新",
 		">更新设置</h3>", `/manage-test/settings/update`,
 		`value="https://mirror.example.com"`,
-		"此通用镜像设置用于 NaivePanel、BypassCore 和 Geo 数据",
+		"此通用镜像设置用于 NaivePanel、BypassCore、AgentCore 和 Geo 数据",
 	} {
 		if !strings.Contains(settingsHTML, want) {
 			t.Fatalf("application management is missing %q:\n%s", want, settingsHTML)
@@ -348,6 +348,32 @@ func TestUpdatedPagesRenderExpectedControls(t *testing.T) {
 	listHTML := recorder.Body.String()
 	if !strings.Contains(listHTML, `class="site-action-buttons"`) {
 		t.Fatalf("site action alignment wrapper missing:\n%s", listHTML)
+	}
+}
+
+func TestAgentCorePagesRenderControls(t *testing.T) {
+	server, err := New(testConfig(t), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest("GET", "/manage-test/agentcore", nil)
+	page := httptest.NewRecorder()
+	server.render(page, request, "agentcore", "AgentCore", map[string]any{
+		"Installed": true, "Active": true, "Enabled": true, "Version": "v0.4.0", "LogLines": 200,
+	})
+	for _, want := range []string{"AgentCore", "/manage-test/agentcore/config", "data-service-label=\"AgentCore\"", "AgentCore 日志"} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Fatalf("AgentCore page missing %q", want)
+		}
+	}
+	page = httptest.NewRecorder()
+	server.render(page, request, "agentcore_config", "AgentCore 配置", map[string]any{
+		"Installed": true, "ConfigJSON": `{"features":{"skill":true,"mcp":true},"mcp":{"servers":{}}}`, "Config": "features:\n  skill: true\n",
+	})
+	for _, want := range []string{"data-agent-tab=\"skills\"", "data-agent-tab=\"mcp\"", "id=\"agent-mcp-dialog\"", "id=\"agent-override-rows\"", "/manage-test/agentcore/skill", "Raw YAML"} {
+		if !strings.Contains(page.Body.String(), want) {
+			t.Fatalf("AgentCore editor missing %q", want)
+		}
 	}
 }
 

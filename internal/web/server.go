@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kinmeic/NaivePanel/internal/agentcore"
 	"github.com/kinmeic/NaivePanel/internal/auth"
 	"github.com/kinmeic/NaivePanel/internal/bypasscore"
 	"github.com/kinmeic/NaivePanel/internal/caddymgr"
@@ -37,6 +38,7 @@ type Server struct {
 	Cfg      *config.Config
 	Caddy    *caddymgr.Manager
 	Bypass   *bypasscore.Manager
+	Agent    *agentcore.Manager
 	WARP     warpService
 	Fail2ban fail2banService
 	Cron     *cronmgr.Manager
@@ -52,6 +54,7 @@ type Server struct {
 	// caddyMu keeps model mutations and the corresponding validate/apply/
 	// rollback pipeline as one transaction across concurrent admin requests.
 	caddyMu sync.Mutex
+	agentMu sync.Mutex
 
 	// serviceOps tracks asynchronous service work. Caddy carries the panel's own
 	// HTTP connection, so its restart must begin only after the response has
@@ -85,6 +88,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		Cfg:              cfg,
 		Caddy:            caddymgr.New(cfg),
 		Bypass:           bypasscore.New(cfg),
+		Agent:            agentcore.New(cfg),
 		WARP:             warp.New(),
 		Fail2ban:         fail2ban.New(),
 		Cron:             cron,
@@ -99,6 +103,7 @@ func New(cfg *config.Config, version string) (*Server, error) {
 		serviceAction:    sysd.Action,
 		serviceActive:    sysd.IsActive,
 	}
+	s.Stats.SetMonthlyState(cfg.SourcePath() + ".monthly-traffic.json")
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
 	}
@@ -203,6 +208,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigGET))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/config", s.protect(s.handleBypassConfigPOST))
 	s.mux.HandleFunc("POST "+bp+"/bypasscore/service", s.protect(s.handleBypassService))
+	s.mux.HandleFunc("GET "+bp+"/agentcore", s.protect(s.handleAgentCore))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/install", s.protect(s.handleAgentCoreInstall))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/update/check", s.protect(s.handleAgentCoreUpdateCheck))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/service", s.protect(s.handleAgentCoreService))
+	s.mux.HandleFunc("GET "+bp+"/agentcore/config", s.protect(s.handleAgentCoreConfigGET))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/config", s.protect(s.handleAgentCoreConfigPOST))
+	s.mux.HandleFunc("POST "+bp+"/agentcore/skill", s.protect(s.handleAgentCoreSkill))
 	s.mux.HandleFunc("GET "+bp+"/service-operations/{id}", s.protect(s.handleServiceOperation))
 	s.mux.HandleFunc("GET "+bp+"/warp", s.protect(s.handleWARP))
 	s.mux.HandleFunc("POST "+bp+"/warp/service", s.protect(s.handleWARPService))

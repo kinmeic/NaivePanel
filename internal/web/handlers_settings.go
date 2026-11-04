@@ -33,6 +33,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			"BinPath":    s.Cfg.BypassCore.BinPath,
 			"ConfigPath": s.Cfg.BypassCore.ConfigPath,
 		},
+		"Agent": map[string]any{
+			"Installed": s.Agent.Installed(),
+			"Version": s.Agent.VersionTag(),
+			"BinPath": s.Cfg.AgentCore.BinPath,
+			"ConfigPath": s.Cfg.AgentCore.ConfigPath,
+		},
 	}
 	s.render(w, r, "settings", "应用管理", data)
 }

@@ -1,7 +1,7 @@
 # NaivePanel
 
 Linux 服务器面板（Go 单二进制）：管理定制 Caddy（NaiveProxy forwardproxy）、多站点、
-BypassCore 分流核心、Cloudflare WARP 与 Geo 数据文件。
+BypassCore 分流核心、AgentCore AI 服务、Cloudflare WARP 与 Geo 数据文件。
 
 详细设计见 [DESIGN.md](DESIGN.md)。
 
@@ -9,7 +9,7 @@ BypassCore 分流核心、Cloudflare WARP 与 Geo 数据文件。
 
 - **Caddy 运维**：服务控制（启动 / 停止 / 重启 / 自启 / 重载）+ 主 Caddyfile 纯文本编辑；
   支持调用 `caddy fmt` 格式化、独立配置检查，以及检查 → 备份 → 原子保存
-- **系统监控**：仪表盘实时展示 CPU、内存、磁盘容量与 I/O、网络实时带宽与累计流量
+- **系统监控**：仪表盘实时展示 CPU、内存、磁盘容量与 I/O、网络实时带宽与按服务器本地自然月重置的累计流量
 - **计划任务**：Web 管理 5 字段 Cron 任务，支持备份/日志清理模板、启停、立即运行与执行日志；
   用户脚本保存为 root 专用独立文件，Cron 条目不内联脚本内容
 - **forward_proxy**：basic_auth 多账号、upstream 配置（可联动本机 BypassCore），
@@ -20,14 +20,17 @@ BypassCore 分流核心、Cloudflare WARP 与 Geo 数据文件。
   control / inbounds / outbounds / routing / dns 结构化配置与 Raw JSON 无损格式化、
   `-check-config` → 控制面事务热重载、
   服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
+- **AgentCore**：从 [AgentCoreGo](https://github.com/kinmeic/AgentCoreGo) release 安装/更新（Linux amd64/arm64、SHA256SUMS 校验与版本自检）；服务控制、YAML 基础配置、托管 Skill 文件增删改与单项启停、MCP 服务增删改与启停。保存前运行 AgentCore 配置校验，失败时回滚配置。
 - **WARP**：官方客户端安装、注册、连接/断开；固定 proxy 模式、本地代理端口设置、
   注册与连接状态、SOCKS5 出口验证、可选 WARP+ license 绑定/变更；后台操作进度与并发保护
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动更新、镜像源
-- **日志**：查看面板操作审计记录，以及 Caddy / BypassCore 的 systemd journal（最近 100–1000 行）
+- **日志**：查看面板操作审计记录，以及 Caddy / BypassCore / AgentCore 的 systemd journal（最近 100–1000 行）
 - **面板安全**：经 Caddy 反代 HTTPS + 随机面板路径 + Argon2id 密码 + 登录锁定 + 可选 TOTP MFA（含恢复码）
 - **fail2ban**：WARP 下方的独立菜单，通过 Debian/Ubuntu 软件源后台安装，支持启停、重启、自启、
   结构化 / Raw jail 规则编辑、校验与失败回滚，以及每页 20 条的最近封禁 IP 和封禁/实际解禁时间（IPv4 / IPv6）
 - **服务器别名**：应用管理页设置或清除，保存后在概览系统信息的主机名下方显示
+
+月流量状态保存在面板配置旁的 `config.yaml.monthly-traffic.json`。升级后首次采样作为本月起点，之后每 30 秒采样并持久化；跨月首次采样将累计值归零。短暂关机或采样间隔跨过月界时无法恢复未采样的流量。
 
 Caddy 编辑器只维护 `caddy.main_file` 指向的主 Caddyfile；该文件导入的其他片段仍由 Caddy
 正常加载，但不会被拼接进编辑器，避免保存主文件时意外改写外部配置。
@@ -160,6 +163,10 @@ bypasscore:
   config_path: /etc/bypasscore/config.json
   control_sock: /run/bypasscore/control.sock
   work_dir: /etc/bypasscore
+agentcore:
+  bin_path: /usr/local/bin/agent-core
+  config_path: /etc/agent-core/agent-core.yaml
+  work_dir: /var/lib/agent-core
 geo:
   dir: /etc/bypasscore
 backup_dir: /etc/naivepanel/backups
@@ -245,6 +252,7 @@ internal/auth/       Argon2id / session / CSRF / 登录锁定 / TOTP
 internal/sites/      站点模型与 Caddyfile 渲染
 internal/caddymgr/   Caddy 主配置格式化、校验、备份、原子保存与 reload
 internal/bypasscore/ BypassCore 安装、配置管线、控制面客户端
+internal/agentcore/  AgentCore release 安装、Skill 文件与配置管理
 internal/geo/        Geo 数据下载与校验
 internal/cronmgr/    计划任务状态、独立脚本与 /etc/cron.d 同步
 internal/systemstats/ Linux /proc 与文件系统资源采样
