@@ -39,3 +39,5 @@
 #agent-chat-usage-label:not(:empty){margin-left:6px}
 @media(max-width:820px){.agent-chat-messages{padding-inline:14px}.agent-chat-requests{left:8px;right:8px;bottom:8px;max-height:70%}.agent-chat-request{max-height:min(68dvh,30rem)}.agent-chat-user{margin-left:auto}.agent-chat-user .agent-chat-message{max-width:100%}}
 @media(hover:none){.agent-chat-copy{opacity:1}}
+
+.agent-chat-session-open{display:block;min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
