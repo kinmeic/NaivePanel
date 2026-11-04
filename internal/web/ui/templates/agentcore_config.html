@@ -31,6 +31,8 @@
    <label>数据库路径<input id="agent-db-path"></label>
    <label>权限模式<select id="agent-permission"><option value="plan">plan</option><option value="build">build</option><option value="edit">edit</option><option value="guarded">guarded</option><option value="yolo">yolo</option></select></label>
   </div>
+  <label class="check"><input type="checkbox" id="agent-allow-outside-workspace">允许访问工作区外路径</label>
+  <p class="muted">开启后，内置文件工具和终端工作目录可指定工作区外路径；相对路径仍以工作区为基准。此选项仅适用于 loopback 监听。终端命令仍拥有 AgentCore 运行账号的系统权限。</p>
   <p class="muted" id="agent-model-limits-help">思考强度按服务商和模型实际支持填写，留空不发送 effort。上下文窗口默认 200000、最大输出默认 32000；请按模型能力调整。</p>
   <p class="muted" id="agent-thinking-help">服务商默认模式不发送 thinking 参数，由模型决定是否思考。显式关闭会禁用思考；自适应和手动预算取决于模型支持情况。手动预算须至少 1024，且小于最大输出 Token。</p>
   <label class="check"><input type="checkbox" id="agent-expose-reasoning">在聊天中显示模型返回的思考内容</label>

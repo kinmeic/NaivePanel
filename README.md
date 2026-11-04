@@ -20,7 +20,7 @@ BypassCore 分流核心、AgentCore AI 服务、Cloudflare WARP 与 Geo 数据�
   control / inbounds / outbounds / routing / dns 结构化配置与 Raw JSON 无损格式化、
   `-check-config` → 控制面事务热重载、
   服务控制、运行状态查看；存量配置未开启 control socket 时会给出明确诊断和一键启用入口
-- **AgentCore**：从 [AgentCoreGo](https://github.com/kinmeic/AgentCoreGo) release 安装/更新（Linux amd64/arm64、SHA256SUMS 校验与版本自检）；服务控制、YAML 基础配置、托管 Skill 文件增删改与单项启停、MCP 服务增删改与启停。保存前运行 AgentCore 配置校验，失败时回滚配置。
+- **AgentCore**：从 [AgentCoreGo](https://github.com/kinmeic/AgentCoreGo) release 安装/更新（Linux amd64/arm64、SHA256SUMS 校验与版本自检）；服务控制、YAML 基础配置（包括 loopback 专用的工作区外路径访问开关）、托管 Skill 文件增删改与单项启停、MCP 服务增删改与启停。保存前运行 AgentCore 配置校验，失败时回滚配置。
 - **WARP**：官方客户端安装、注册、连接/断开；固定 proxy 模式、本地代理端口设置、
   注册与连接状态、SOCKS5 出口验证、可选 WARP+ license 绑定/变更；后台操作进度与并发保护
 - **Geo 数据**：geoip.dat / geosite.dat 下载（sha256 校验 + 原子替换）、手动更新、镜像源
