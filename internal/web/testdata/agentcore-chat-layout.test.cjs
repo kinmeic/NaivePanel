@@ -11,7 +11,7 @@ function rule(selector) {
   return css.slice(start + selector.length + 1, css.indexOf('}', start));
 }
 function updatedRule(selector) {
-  const start = css.indexOf(selector + '{', css.indexOf('/* Match ZCode'));
+  const start = css.indexOf(selector + '{', css.indexOf('/* Use the available timeline width'));
   assert.notEqual(start, -1, 'missing rule: ' + selector);
   return css.slice(start + selector.length + 1, css.indexOf('}', start));
 }
@@ -37,6 +37,11 @@ test('process details have distinct reasoning, tool result and answer styling', 
   assert.match(css, /\.agent-chat-process:empty,\.agent-chat-answer:empty\{display:none\}/);
   assert.match(rule('.agent-chat-reasoning'), /border-left-color:var\(--accent\)/);
   assert.match(rule('.agent-chat-tool[data-state=success]'), /border-left-color:var\(--ok\)/);
+});
+test('message column fills wide viewports without the old centered 780px cap', () => {
+  assert.match(updatedRule('.agent-chat-message-wrap'), /width:100%;max-width:none;margin:0 0 24px/);
+  assert.doesNotMatch(css, /max-width:\s*780px/);
+  assert.match(updatedRule('.agent-chat-messages'), /padding:24px 12px/);
 });
 test('user bubbles keep natural width on the right and assistant messages use a plain column', () => {
   assert.match(updatedRule('.agent-chat-user'), /align-items:flex-end/);
