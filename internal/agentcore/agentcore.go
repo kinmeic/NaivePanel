@@ -390,16 +390,16 @@ func (m *Manager) writeConfigFile(data []byte) error {
 	}
 	return nil
 }
-func (m *Manager) writeUnit() error {
-	unit := fmt.Sprintf(`[Unit]
+func (m *Manager) unitContent() string {
+	return fmt.Sprintf(`[Unit]
 Description=AgentCore AI Service
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=agent-core
-Group=agent-core
+User=root
+Group=root
 WorkingDirectory=%s
 ExecStart=%s -config %s
 Restart=on-failure
@@ -413,7 +413,10 @@ ReadWritePaths=%s
 [Install]
 WantedBy=multi-user.target
 `, m.cfg.AgentCore.WorkDir, m.cfg.AgentCore.BinPath, m.cfg.AgentCore.ConfigPath, m.cfg.AgentCore.WorkDir)
-	if err := os.WriteFile(unitPath, []byte(unit), 0644); err != nil {
+}
+
+func (m *Manager) writeUnit() error {
+	if err := os.WriteFile(unitPath, []byte(m.unitContent()), 0644); err != nil {
 		return err
 	}
 	out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput()

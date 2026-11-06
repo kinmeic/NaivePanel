@@ -37,7 +37,7 @@
   <p class="muted" id="agent-thinking-help">服务商默认模式不发送 thinking 参数，由模型决定是否思考。显式关闭会禁用思考；自适应和手动预算取决于模型支持情况。手动预算须至少 1024，且小于最大输出 Token。</p>
   <label class="check"><input type="checkbox" id="agent-expose-reasoning">在聊天中显示模型返回的思考内容</label>
   <label class="check"><input type="checkbox" id="agent-terminal">启用终端工具</label>
-  <p class="muted">AgentCore 以独立系统用户运行，终端并非操作系统沙箱。本机监听默认启用终端；非 loopback 监听必须关闭终端，并在 Raw YAML 中设置 server.auth_token。</p>
+  <p class="muted">通过本面板安装/更新的 AgentCore 服务以 root 运行，终端命令具有系统级权限，请仅对可信任务授权。服务仍保留系统目录只读、家目录隔离等限制；旧服务须重新安装/更新并重启才会切换用户。本机监听默认启用终端；非 loopback 监听必须关闭终端，并在 Raw YAML 中设置 server.auth_token。</p>
   <div class="actions"><button type="submit" class="primary">{{icon "save"}}校验并保存</button></div>
  </section>
  <section class="config-panel hidden" data-agent-panel="skills">
