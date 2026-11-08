@@ -32,9 +32,9 @@ func (s *Server) handleAgentCoreOptions(w http.ResponseWriter, r *http.Request) 
 			Context int    `yaml:"context_window"`
 			Output  int    `yaml:"max_output_tokens"`
 		} `yaml:"llm"`
-		Tools struct {
-			Approval string `yaml:"approval_mode"`
-		} `yaml:"tools"`
+		Permission struct {
+			Mode string `yaml:"mode"`
+		} `yaml:"permission"`
 	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		http.Error(w, "AgentCore 配置格式错误", http.StatusServiceUnavailable)
@@ -46,15 +46,15 @@ func (s *Server) handleAgentCoreOptions(w http.ResponseWriter, r *http.Request) 
 	if cfg.LLM.Output <= 0 {
 		cfg.LLM.Output = 32000
 	}
-	if cfg.Tools.Approval == "" {
-		cfg.Tools.Approval = "build"
+	if cfg.Permission.Mode == "" {
+		cfg.Permission.Mode = "build"
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]any{
 		"model": cfg.LLM.Model, "reasoning_effort": cfg.LLM.Effort,
 		"context_window": cfg.LLM.Context, "max_output_tokens": cfg.LLM.Output,
-		"approval_mode": cfg.Tools.Approval,
+		"approval_mode": cfg.Permission.Mode,
 	})
 }
 

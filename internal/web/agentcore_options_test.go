@@ -14,7 +14,7 @@ func TestAgentCoreOptionsExposeOnlyComposerSettings(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		config := "server: {auth_token: secret-token}\nllm: {model: test-model, api_key: secret-key}\n"
 		if explicit {
-			config = "server: {auth_token: secret-token}\nllm: {model: test-model, api_key: secret-key, reasoning_effort: high, context_window: 64000, max_output_tokens: 8000}\ntools: {approval_mode: plan}\n"
+			config = "server: {auth_token: secret-token}\nllm: {model: test-model, api_key: secret-key, reasoning_effort: high, context_window: 64000, max_output_tokens: 8000}\npermission: {mode: yolo}\ntools: {approval_mode: plan}\n"
 		}
 		if err := os.WriteFile(s.Cfg.AgentCore.ConfigPath, []byte(config), 0600); err != nil {
 			t.Fatal(err)
@@ -33,7 +33,7 @@ func TestAgentCoreOptionsExposeOnlyComposerSettings(t *testing.T) {
 		}
 		context, output, mode, effort := float64(200000), float64(32000), "build", ""
 		if explicit {
-			context, output, mode, effort = 64000, 8000, "plan", "high"
+			context, output, mode, effort = 64000, 8000, "yolo", "high"
 		}
 		if data["model"] != "test-model" || data["reasoning_effort"] != effort || data["context_window"] != context || data["max_output_tokens"] != output || data["approval_mode"] != mode {
 			t.Fatalf("settings: %#v", data)

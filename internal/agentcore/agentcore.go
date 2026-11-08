@@ -240,48 +240,9 @@ func (m *Manager) Install(mirror string) (string, error) {
 	if err = m.ValidateConfig(mustRead(m.cfg.AgentCore.ConfigPath), tmp); err != nil {
 		return "", fmt.Errorf("现有配置校验失败: %w", err)
 	}
-	old := dest + ".previous"
-	_ = os.Remove(old)
-	hadOld := false
-	if _, err = os.Stat(dest); err == nil {
-		if err = os.Rename(dest, old); err != nil {
-			return "", err
-		}
-		hadOld = true
-	}
-	if err = os.Rename(tmp, dest); err != nil {
-		if hadOld {
-			_ = os.Rename(old, dest)
-		}
+	if err = m.activateInstall(tmp, unitPath, runSystemctl, restartAndWait); err != nil {
 		return "", err
 	}
-	if err = m.writeUnit(); err != nil {
-		if hadOld {
-			_ = os.Rename(old, dest)
-		} else {
-			_ = os.Remove(dest)
-		}
-		return "", err
-	}
-	if out, e := exec.Command("systemctl", "enable", "agent-core").CombinedOutput(); e != nil {
-		if hadOld {
-			_ = os.Rename(old, dest)
-		} else {
-			_ = os.Remove(dest)
-		}
-		return "", fmt.Errorf("开启 AgentCore 自启失败: %v: %s", e, out)
-	}
-	if e := restartAndWait(); e != nil {
-		if hadOld {
-			_ = os.Rename(old, dest)
-			_ = restartAndWait()
-		} else {
-			_ = os.Remove(dest)
-			_, _ = exec.Command("systemctl", "disable", "--now", "agent-core").CombinedOutput()
-		}
-		return "", fmt.Errorf("启动 AgentCore 失败: %w", e)
-	}
-	_ = os.Remove(old)
 	return rel.TagName, nil
 }
 func mustRead(path string) []byte { b, _ := os.ReadFile(path); return b }
@@ -415,16 +376,6 @@ WantedBy=multi-user.target
 `, m.cfg.AgentCore.WorkDir, m.cfg.AgentCore.BinPath, m.cfg.AgentCore.ConfigPath, m.cfg.AgentCore.WorkDir)
 }
 
-func (m *Manager) writeUnit() error {
-	if err := os.WriteFile(unitPath, []byte(m.unitContent()), 0644); err != nil {
-		return err
-	}
-	out, err := exec.Command("systemctl", "daemon-reload").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("systemd 重载失败: %v: %s", err, out)
-	}
-	return nil
-}
 func (m *Manager) ReadConfig() ([]byte, error) { return os.ReadFile(m.cfg.AgentCore.ConfigPath) }
 func (m *Manager) ValidateConfig(content []byte, bin string) error {
 	if len(content) == 0 || len(content) > 1<<20 {
@@ -475,8 +426,12 @@ func (m *Manager) SaveConfig(content []byte, active bool) error {
 	}
 	if active {
 		if e := restartAndWait(); e != nil {
-			_ = m.writeConfigFile(old)
-			_ = restartAndWait()
+			if rollbackErr := m.writeConfigFile(old); rollbackErr != nil {
+				return fmt.Errorf("重启失败: %w；配置回滚失败: %w", e, rollbackErr)
+			}
+			if restoreErr := restartAndWait(); restoreErr != nil {
+				return fmt.Errorf("重启失败: %w；配置已回滚，但服务恢复失败: %w", e, restoreErr)
+			}
 			return fmt.Errorf("重启失败，配置已回滚: %w", e)
 		}
 	}

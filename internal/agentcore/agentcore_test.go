@@ -70,3 +70,64 @@ func TestSaveConfigValidatesBeforeReplacing(t *testing.T) {
 	// SaveConfig also adjusts ownership for the service account, so a full
 	// successful write is exercised by deployment rather than this local test.
 }
+
+func TestSaveConfigReportsActualRollbackOutcome(t *testing.T) {
+	for _, scenario := range []string{"restored", "write-failed", "restart-failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "agent-core.yaml")
+			binary := filepath.Join(dir, "agent-core")
+			t.Setenv("AGENTCORE_TEST_CONFIG", path)
+			t.Setenv("AGENTCORE_TEST_STATE", filepath.Join(dir, "restarted"))
+			t.Setenv("AGENTCORE_TEST_SCENARIO", scenario)
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			files := map[string]string{
+				path:                        "old: true\n",
+				binary:                      "#!/bin/sh\nexit 0\n",
+				filepath.Join(dir, "chown"): "#!/bin/sh\nexit 0\n",
+				filepath.Join(dir, "systemctl"): `#!/bin/sh
+if [ "$1" = restart ]; then
+  if [ ! -e "$AGENTCORE_TEST_STATE" ]; then
+    touch "$AGENTCORE_TEST_STATE"
+    if [ "$AGENTCORE_TEST_SCENARIO" = write-failed ]; then
+      mkdir "$AGENTCORE_TEST_CONFIG.new"
+    fi
+    echo initial-restart-failed
+    exit 1
+  fi
+  if [ "$AGENTCORE_TEST_SCENARIO" = restart-failed ]; then
+    echo recovery-restart-failed
+    exit 1
+  fi
+fi
+exit 0
+`,
+			}
+			for p, content := range files {
+				if err := os.WriteFile(p, []byte(content), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := New(&config.Config{AgentCore: config.AgentCore{BinPath: binary, ConfigPath: path, WorkDir: dir}})
+			err := m.SaveConfig([]byte("new: true\n"), true)
+			if err == nil {
+				t.Fatal("restart failure was hidden")
+			}
+			want := map[string]string{"restored": "配置已回滚", "write-failed": "配置回滚失败", "restart-failed": "服务恢复失败"}[scenario]
+			if !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "initial-restart-failed") {
+				t.Fatalf("misleading rollback result: %v", err)
+			}
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			wantContent := "old: true\n"
+			if scenario == "write-failed" {
+				wantContent = "new: true\n"
+			}
+			if string(content) != wantContent {
+				t.Fatalf("config=%q, want %q", content, wantContent)
+			}
+		})
+	}
+}

@@ -72,8 +72,17 @@
     error("登录已失效，请重新登录后刷新页面。");
     controls();
   }
+  function effectiveMode() {
+    if (!current) return selectedMode;
+    if (!preferencesKnown) return "";
+    return conversationMetadata.mode || (optionsReady ? options.approval_mode || "" : "");
+  }
+  function permissionKnown() {
+    var mode = effectiveMode();
+    return modeValues.indexOf(mode) >= 0 || mode === "auto";
+  }
   function controls() {
-    input.disabled = !enabled || busy || loading || savingPreferences || !ready;
+    input.disabled = !enabled || busy || loading || savingPreferences || !ready || !permissionKnown();
         var session = sessions.get(current);
                 var active = session && ["unknown", "running", "waiting"].indexOf(session.state) >= 0;
                 el("mode").disabled = !enabled || !optionsReady || busy || loading || savingPreferences || !!active || !preferencesKnown;
@@ -431,8 +440,8 @@
   input.addEventListener("keydown", function (event) { if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!el("send").disabled) el("form").requestSubmit(); } });
   el("form").addEventListener("submit", async function (event) {
     event.preventDefault(); var message = input.value.trim(); if (!enabled || busy || loading || savingPreferences || !ready || !message) return;
-    var effectiveMode = current ? (preferencesKnown ? conversationMetadata.mode || options.approval_mode || "" : "") : selectedMode;
-        if (!confirmPermission(effectiveMode)) return;
+    if (!permissionKnown()) { error("权限模式尚未确认，请刷新会话设置后重试。"); return; }
+        if (!confirmPermission(effectiveMode())) return;
         var token = ++generation; busy = true; liveStatus("running", "正在提交运行"); stopping = false; stopped = false; clearPending(); input.value = ""; error(""); updateUsage(null);
     addMessage({ role: "user", content: message }); var assistant = addMessage({ role: "assistant" }), reply = "", terminal = false, seen = new Set();
     streamController = new AbortController(); status("正在连接流…"); controls();

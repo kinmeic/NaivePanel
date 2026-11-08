@@ -546,6 +546,35 @@ test('failed conversation detail does not invent restored preferences', async ()
   assert.equal(h.el('effort'), null); assert.equal(h.el('mode').value, 'unknown');
   assert.equal(h.el('settings').textContent, '未知 · 未知');
   assert.match(h.el('settings').textContent, /未知/); assert.match(h.el('error').textContent, /未确认当前设置/);
+  assert.equal(h.el('input').disabled, true);
+  h.el('input').value = 'task'; await h.el('form').events.submit({ preventDefault() {} });
+  assert.ok(!h.calls.some(c => c.url.endsWith('/chat/stream')));
+  assert.equal(h.el('input').value, 'task');
+});
+for (const mode of ['', 'unrecognized']) test('unknown effective permission blocks sending: ' + mode, async () => {
+  const h = harness(url => {
+    if (url.endsWith('/options')) return { ok: false, status: 503, json: async () => ({}) };
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata: { mode } });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+  });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  assert.equal(h.el('input').disabled, true);
+  h.el('input').value = 'task'; await h.el('form').events.submit({ preventDefault() {} });
+  assert.ok(!h.calls.some(c => c.url.endsWith('/chat/stream')));
+  // An explicit build mode makes a new conversation safe even if options fail.
+  h.el('new').events.click(); assert.equal(h.el('input').disabled, false);
+});
+test('inherited high-risk service permissions require confirmation', async () => {
+  let confirms = 0;
+  const h = harness(url => {
+    if (url.endsWith('/conversations')) return jsonResponse([{ id: 'saved' }]);
+    if (url.endsWith('/conversations/saved')) return jsonResponse({ id: 'saved', metadata: {} });
+    if (url.endsWith('/logs')) return jsonResponse([]);
+  }, () => { confirms++; return false; });
+  await tick(); h.el('list').querySelectorAll('.agent-chat-session-open')[0].events.click(); await tick();
+  h.el('input').value = 'task'; await h.el('form').events.submit({ preventDefault() {} });
+  assert.equal(confirms, 1); assert.ok(!h.calls.some(c => c.url.endsWith('/chat/stream')));
 });
 test('full-message copy uses latest streamed raw Markdown and resets the correct button label', async () => {
   const h = harness(); await tick(); h.el('input').value = 'user message';
